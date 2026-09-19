@@ -7,7 +7,7 @@ import { useThemeStore } from '@/store/themeStore';
 import { partitionSupportedFiles } from '@/services/localsend/formats';
 import { previewDataUrl } from '@/services/localsend/preview';
 import type { ReceiveRequest } from '@/services/localsend/types';
-import { isNearbyPairingAllowed } from '@/utils/access';
+import { ACCOUNTLESS_BUILD, isNearbyPairingAllowed } from '@/utils/access';
 import { formatBytes } from '@/utils/book';
 import { navigateToLogin, navigateToProfile } from '@/utils/nav';
 import Alert from '@/components/Alert';
@@ -66,6 +66,9 @@ const ReceiveRequestDialog: React.FC<ReceiveRequestDialogProps> = ({
     request.sender.certVerified && !pairingEntitled && (!user || userProfilePlan !== undefined);
 
   const openUpgrade = () => {
+    // FORK (ACCOUNTLESS_BUILD): no upgrade page and no account to route to, so
+    // the locked pairing affordance stays inert instead of navigating.
+    if (ACCOUNTLESS_BUILD) return;
     if (user) {
       navigateToProfile(router);
     } else {

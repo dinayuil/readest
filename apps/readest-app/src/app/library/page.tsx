@@ -21,6 +21,8 @@ import { createThrottledCheckpoint } from '@/utils/checkpoint';
 import { DEFAULT_NEARBY_WORDS } from '@/utils/searchConfig';
 import { clearLibrarySearchHistory, loadLibrarySearchHistory } from './utils/searchHistory';
 import type { LibrarySearchTarget } from '@/types/book';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
+import { promptMissingSyncProvider } from '@/utils/accountless';
 import { navigateToLibrary, navigateToLogin, navigateToReader } from '@/utils/nav';
 import { splitLibraryOpenIds } from '@/utils/audiobook';
 import { getBookWithUpdatedMetadata, listFormater } from '@/utils/book';
@@ -53,6 +55,7 @@ import { useUICSS } from '@/hooks/useUICSS';
 import { useDemoBooks } from './hooks/useDemoBooks';
 import { useBooksSync } from './hooks/useBooksSync';
 import { useLibraryFileSync } from './hooks/useLibraryFileSync';
+import { hasFileSyncMirror } from '@/hooks/useMakeBookAvailable';
 import { useBookTransferActions } from './hooks/useBookTransferActions';
 import { useAbsOfflineDownload } from './hooks/useAbsOfflineDownload';
 import { useAutoImportFolders } from './hooks/useAutoImportFolders';
@@ -394,19 +397,31 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   useInboxDrainer();
   const { isDragging } = useDragDropImport();
 
+  // A signed-out device with cloud storage enabled has something to pull: the
+  // file pass carries no Readest account dependency. With nothing enabled there
+  // is nothing to sync at all, and the pull gesture must not dead-end on a
+  // sign-in page in a build that hides every account entry — see
+  // ACCOUNTLESS_BUILD.
+  const handleNoSyncProvider = () => {
+    if (ACCOUNTLESS_BUILD) {
+      promptMissingSyncProvider();
+    } else {
+      navigateToLogin(router);
+    }
+  };
   usePullToRefresh(
     scrollRef,
     async () => {
-      if (!user) {
-        navigateToLogin(router);
+      if (!user && !hasFileSyncMirror()) {
+        handleNoSyncProvider();
         return;
       }
       await pullLibrary(false, true);
       checkOPDSSubscriptions(true);
     },
     async () => {
-      if (!user) {
-        navigateToLogin(router);
+      if (!user && !hasFileSyncMirror()) {
+        handleNoSyncProvider();
         return;
       }
       await pullLibrary(true, true);
@@ -729,7 +744,9 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           setSettings(settings);
           saveSettings(envConfig, settings);
         }
-      } else if (settings.keepLogin) {
+      } else if (settings.keepLogin && !ACCOUNTLESS_BUILD) {
+        // A remembered sign-in must not drag a build with no account support
+        // back to `/auth` on every launch (see ACCOUNTLESS_BUILD).
         router.push('/auth');
       }
     };

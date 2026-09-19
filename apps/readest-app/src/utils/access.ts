@@ -58,6 +58,20 @@ export const isCloudSyncInPlan = (plan: UserPlan, customizationPurchased: boolea
   isCustomizationAllowed(plan, customizationPurchased);
 
 /**
+ * Fork master switch: this build ships without a Readest account and without a
+ * Readest Cloud to talk to. Every fork change hangs off this ONE token, so an
+ * upstream rebase reconciles the whole divergence with a single search instead
+ * of a file-by-file review.
+ *
+ * ON: entitlement that can only be resolved from a signed-in JWT is treated as
+ * "not ours to gate", and Readest Cloud's own channels are switched off at the
+ * source ({@link isReadestCloudEnabled}) rather than hidden one UI surface at a
+ * time. Flip to `false` — or delete the block and hard-code the two values it
+ * feeds back to their upstream ones — to restore stock behaviour.
+ */
+export const ACCOUNTLESS_BUILD = true;
+
+/**
  * Master switch for the third-party cloud-sync premium paywall. ON: cloud
  * sync (WebDAV / Google Drive / S3) requires a {@link CLOUD_SYNC_PLANS} plan —
  * free users see the provider rows with a Premium badge and an upgrade route
@@ -65,8 +79,13 @@ export const isCloudSyncInPlan = (plan: UserPlan, customizationPurchased: boolea
  * provider is paused (never a silent fallback to Readest Cloud uploads, #4959).
  * Every gate goes through {@link isCloudSyncAllowed}, so this flag is the
  * whole toggle.
+ *
+ * OFF in this fork (see {@link ACCOUNTLESS_BUILD}): the entitlement it encodes
+ * is only knowable from a signed-in JWT, so leaving it on locks a signed-out
+ * user out of the WebDAV / S3 / Drive storage they configured themselves — the
+ * transport behind it (`services/sync/file/`) never contacts Readest Cloud.
  */
-export const CLOUD_SYNC_REQUIRES_PREMIUM = true;
+export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD;
 
 /**
  * Whether third-party cloud sync is available for a plan. Falls back to the

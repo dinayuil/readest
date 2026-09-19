@@ -12,6 +12,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useUserActions } from '@/hooks/useUserActions';
 import { useAvailablePlans } from '@/hooks/useAvailablePlans';
 import type { PlanType } from '@/types/quota';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { navigateToLibrary } from '@/utils/nav';
 import { eventDispatcher } from '@/utils/event';
 import { isTauriAppPlatform } from '@/services/environment';
@@ -80,6 +81,10 @@ const ProfilePage = () => {
 
   useEffect(() => {
     if (!mounted) return;
+    // FORK (ACCOUNTLESS_BUILD): this page has no entry point and nothing to
+    // administer without an account, so it must never bounce a visitor to
+    // `/auth` on a timer.
+    if (ACCOUNTLESS_BUILD) return;
 
     const isAuthenticated = user && token && appService;
     if (isAuthenticated) return;

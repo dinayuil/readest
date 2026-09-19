@@ -6,6 +6,7 @@ import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useAppRouter } from '@/hooks/useAppRouter';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { navigateToLogin } from '@/utils/nav';
 
 interface LibraryEmptyStateProps {
@@ -42,7 +43,10 @@ const LibraryEmptyState: React.FC<LibraryEmptyStateProps> = ({ onImport }) => {
           </button>
           {/* TODO: add a 'Browse free catalogs' secondary action that opens the
               OPDS dialog (handleShowOPDSDialog) once we settle on placement. */}
-          {!user && (
+          {/* FORK (ACCOUNTLESS_BUILD): sync is configured in Settings →
+              Integrations, not behind an account, so the sign-in nudge has
+              nowhere to lead. */}
+          {!ACCOUNTLESS_BUILD && !user && (
             <button
               type='button'
               className={clsx(

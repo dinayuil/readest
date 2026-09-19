@@ -12,6 +12,7 @@ import {
   getTranslators,
   isTranslatorAvailable,
 } from '@/services/translators';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import Select from '@/components/Select';
 
 const notSupportedLangs = [''];
@@ -92,11 +93,16 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   };
 
   useEffect(() => {
-    const availableProviders = translators.map((t) => ({
-      name: t.name,
-      label: getTranslatorDisplayLabel(t, !!token, _),
-      disabled: !!t.disabled,
-    }));
+    // FORK (ACCOUNTLESS_BUILD): drop the providers that can only be served from
+    // Readest's backend against a signed-in account — mirrors LangPanel so both
+    // pickers offer the same set.
+    const availableProviders = translators
+      .filter((t) => !ACCOUNTLESS_BUILD || !t.authRequired)
+      .map((t) => ({
+        name: t.name,
+        label: getTranslatorDisplayLabel(t, !!token, _),
+        disabled: !!t.disabled,
+      }));
     setProviders(availableProviders);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [translators]);

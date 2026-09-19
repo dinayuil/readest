@@ -298,7 +298,10 @@ export const DEFAULT_READSETTINGS: ReadSettings = {
   notebookWidth: '25%',
   isNotebookPinned: false,
   notebookActiveTab: 'notes',
-  translationProvider: 'deepl',
+  // FORK (ACCOUNTLESS_BUILD): DeepL is served by Readest's own backend and
+  // billed against the signed-in account's daily quota, so this build defaults
+  // to the keyless provider that works with no account at all.
+  translationProvider: 'google',
   translateTargetLang: 'EN',
   wordLensAutoDownload: true,
 
@@ -491,7 +494,8 @@ export const DEFAULT_TTS_CONFIG: TTSConfig = {
 
 export const DEFAULT_TRANSLATOR_CONFIG: TranslatorConfig = {
   translationEnabled: false,
-  translationProvider: 'deepl',
+  // FORK (ACCOUNTLESS_BUILD): see DEFAULT_READSETTINGS.translationProvider.
+  translationProvider: 'google',
   translateTargetLang: '',
   showTranslateSource: true,
   ttsReadAloudText: 'both',

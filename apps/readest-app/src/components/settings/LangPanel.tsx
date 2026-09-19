@@ -14,6 +14,7 @@ import {
 } from '@/services/translators';
 import { isTranslationAvailable } from '@/services/translators/utils';
 import { useResetViewSettings } from '@/hooks/useResetSettings';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { useKeyDownActions } from '@/hooks/useKeyDownActions';
 import { TRANSLATED_LANGS, TRANSLATOR_LANGS } from '@/services/constants';
 import { ConvertChineseVariant } from '@/types/book';
@@ -135,13 +136,22 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
   };
 
   const getTranslationProviderOptions = () => {
-    return getTranslators().map((t) => ({
-      value: t.name,
-      label: getTranslatorDisplayLabel(t, !!token, _),
-      // Providers marked `disabled` (e.g. upstream relay is down) stay in the
-      // dropdown so users can see them, but cannot be selected.
-      disabled: !!t.disabled,
-    }));
+    return (
+      getTranslators()
+        // FORK (ACCOUNTLESS_BUILD): providers whose `authRequired` is set can
+        // only be served from Readest's backend against a signed-in account, so
+        // listing them would offer a "(Login Required)" entry this build can
+        // never honour. Filtered on the static flag rather than the live token,
+        // so Android keeps Bing/Yandex (direct, keyless) and web keeps Google.
+        .filter((t) => !ACCOUNTLESS_BUILD || !t.authRequired)
+        .map((t) => ({
+          value: t.name,
+          label: getTranslatorDisplayLabel(t, !!token, _),
+          // Providers marked `disabled` (e.g. upstream relay is down) stay in the
+          // dropdown so users can see them, but cannot be selected.
+          disabled: !!t.disabled,
+        }))
+    );
   };
 
   const getCurrentTranslationProviderOption = () => {

@@ -4,7 +4,7 @@ import { useAppRouter } from '@/hooks/useAppRouter';
 import { useQuotaStats } from '@/hooks/useQuotaStats';
 import { useTranslation } from '@/hooks/useTranslation';
 import { transferManager } from '@/services/transferManager';
-import { isAbsOfflineAllowed } from '@/utils/access';
+import { ACCOUNTLESS_BUILD, isAbsOfflineAllowed } from '@/utils/access';
 import { navigateToLogin, navigateToProfile } from '@/utils/nav';
 import type { Book } from '@/types/book';
 
@@ -28,7 +28,12 @@ export const useAbsOfflineDownload = () => {
     (book: Book) => {
       if (entitled) {
         transferManager.queueAbsOfflineDownload(book, 1);
-      } else if (user) {
+        return;
+      }
+      // FORK (ACCOUNTLESS_BUILD): no upgrade page and no account to route to,
+      // so an unentitled download is a no-op rather than a navigation.
+      if (ACCOUNTLESS_BUILD) return;
+      if (user) {
         navigateToProfile(router);
       } else {
         navigateToLogin(router);

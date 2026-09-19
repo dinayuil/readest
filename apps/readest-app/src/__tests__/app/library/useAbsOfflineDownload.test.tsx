@@ -49,17 +49,20 @@ describe('useAbsOfflineDownload', () => {
     expect(queueAbsOfflineDownload).toHaveBeenCalledWith(book, 1);
   });
 
-  it('routes a free user to the upgrade page', () => {
+  // FORK (ACCOUNTLESS_BUILD): no upgrade page and no account to route to, so an
+  // unentitled tap is a no-op that still queues nothing.
+  it('is a no-op for a free user, with no upgrade route to offer', () => {
     const { result } = renderHook(() => useAbsOfflineDownload());
 
     expect(result.current.offlinePremiumLabel).toBe('Premium');
     result.current.handleBookOfflineDownload(book);
 
     expect(queueAbsOfflineDownload).not.toHaveBeenCalled();
-    expect(navigateToProfile).toHaveBeenCalled();
+    expect(navigateToProfile).not.toHaveBeenCalled();
+    expect(navigateToLogin).not.toHaveBeenCalled();
   });
 
-  it('routes a signed-out user to sign in', () => {
+  it('is a no-op for a signed-out user, with no sign-in to route to', () => {
     state.user = null;
     state.plan = undefined;
     const { result } = renderHook(() => useAbsOfflineDownload());
@@ -67,7 +70,8 @@ describe('useAbsOfflineDownload', () => {
     expect(result.current.offlinePremiumLabel).toBe('Premium');
     result.current.handleBookOfflineDownload(book);
 
-    expect(navigateToLogin).toHaveBeenCalled();
+    expect(navigateToLogin).not.toHaveBeenCalled();
+    expect(navigateToProfile).not.toHaveBeenCalled();
     expect(queueAbsOfflineDownload).not.toHaveBeenCalled();
   });
 

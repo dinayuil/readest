@@ -11,6 +11,7 @@ import { transformBookNoteFromDB } from '@/utils/transform';
 import { transformBookFromDB } from '@/utils/transform';
 import { DBBook, DBBookConfig, DBBookNote } from '@/types/records';
 import { Book, BookConfig, BookDataRecord, BookNote } from '@/types/book';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { navigateToLogin } from '@/utils/nav';
 import { useReaderStore } from '@/store/readerStore';
 
@@ -237,7 +238,9 @@ export function useSync(bookKey?: string) {
       if (err instanceof Error) {
         // Read live store settings, not the stale hook closure (see below).
         const latest = useSettingsStore.getState().settings;
-        if (err.message.includes('Not authenticated') && latest.keepLogin) {
+        // FORK (ACCOUNTLESS_BUILD): signed out is the normal state in this
+        // build, so an unauthenticated pull must never route to `/auth`.
+        if (err.message.includes('Not authenticated') && latest.keepLogin && !ACCOUNTLESS_BUILD) {
           latest.keepLogin = false;
           setSettings(latest);
           navigateToLogin(router);

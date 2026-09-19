@@ -32,7 +32,7 @@ import { useFileSyncStore } from '@/store/fileSyncStore';
 import { useLocalSendStore } from '@/store/localsendStore';
 import { CatalogManager } from '@/app/opds/components/CatalogManager';
 import { saveSysSettings } from '@/helpers/settings';
-import { isCloudSyncAllowed } from '@/utils/access';
+import { ACCOUNTLESS_BUILD, isCloudSyncAllowed } from '@/utils/access';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
 import { getLocalSendAlias, isLocalSendEnabled } from '@/services/localsend/devicePrefs';
 import { getGoogleWebClientId } from '@/services/sync/providers/gdrive/buildGoogleDriveProvider';
@@ -647,16 +647,22 @@ const IntegrationsPanel: React.FC = () => {
             role='group'
             aria-label={_('Cloud sync providers')}
           >
-            <CloudProviderRow
-              icon={RiCloudFill}
-              title={_('Readest Cloud')}
-              status={readestStatus}
-              checked={!!user && readestEnabled}
-              canToggle={!!user}
-              onToggle={(next) => toggleCloudProvider('readest', next)}
-              onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
-              toggleLabel={_('Sync with Readest Cloud')}
-            />
+            {/* FORK (ACCOUNTLESS_BUILD): Readest Cloud is the one provider this
+                build cannot reach — no account, no server — so its row is
+                dropped rather than left reading "Not signed in" behind a
+                sign-in route the build hides. */}
+            {!ACCOUNTLESS_BUILD && (
+              <CloudProviderRow
+                icon={RiCloudFill}
+                title={_('Readest Cloud')}
+                status={readestStatus}
+                checked={!!user && readestEnabled}
+                canToggle={!!user}
+                onToggle={(next) => toggleCloudProvider('readest', next)}
+                onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
+                toggleLabel={_('Sync with Readest Cloud')}
+              />
+            )}
             {/* Third-party providers are premium: every row carries the tier
                 badge; on a free plan the checkbox is disabled and opening a
                 row routes to the upgrade page instead of the config sub-page. */}
@@ -791,12 +797,17 @@ const IntegrationsPanel: React.FC = () => {
               status={absStatus}
               onClick={() => setSubPage('audiobookshelf')}
             />
-            <IntegrationRow
-              icon={RiSendPlaneLine}
-              title={_('Send to Readest')}
-              status={_('Email books to your library')}
-              onClick={() => setSubPage('send')}
-            />
+            {/* FORK (ACCOUNTLESS_BUILD): the email inbox is allocated per
+                account and served by readest.com, so the row has nothing to
+                configure here. */}
+            {!ACCOUNTLESS_BUILD && (
+              <IntegrationRow
+                icon={RiSendPlaneLine}
+                title={_('Send to Readest')}
+                status={_('Email books to your library')}
+                onClick={() => setSubPage('send')}
+              />
+            )}
             {isTauriAppPlatform() && (
               <IntegrationRow
                 icon={RiWifiLine}
@@ -809,7 +820,9 @@ const IntegrationsPanel: React.FC = () => {
         </div>
       </div>
 
-      {appService?.isDesktopApp && (
+      {/* FORK (ACCOUNTLESS_BUILD): publishing a presence needs the account's
+          identity, and the toggle otherwise routes to the sign-in page. */}
+      {!ACCOUNTLESS_BUILD && appService?.isDesktopApp && (
         <div className='w-full' data-setting-id='settings.integrations.discord'>
           <SectionTitle className='mb-2'>{_('Discord')}</SectionTitle>
           <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>

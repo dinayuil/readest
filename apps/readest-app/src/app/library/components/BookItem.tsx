@@ -11,13 +11,14 @@ import {
 import { Book } from '@/types/book';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
-import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { LibraryCoverFitType, LibraryViewModeType } from '@/types/settings';
-import { navigateToLogin } from '@/utils/nav';
-import { isReadestCloudStorageActive } from '@/services/sync/cloudSyncProvider';
+import {
+  getActiveFileSyncBackends,
+  isReadestCloudStorageActive,
+} from '@/services/sync/cloudSyncProvider';
 import { isFeedBook } from '@/services/rss/feedBookUrl';
 import { isAudiobook } from '@/utils/audiobook';
 import { formatAuthors, formatDescription, formatSeries } from '@/utils/book';
@@ -52,7 +53,6 @@ const BookItem: React.FC<BookItemProps> = ({
   showTimeRemaining,
 }) => {
   const _ = useTranslation();
-  const router = useRouter();
   const { user } = useAuth();
   const { appService } = useEnv();
   const { settings } = useSettingsStore();
@@ -271,10 +271,6 @@ const BookItem: React.FC<BookItemProps> = ({
                     className='show-cloud-button -m-2 p-2'
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => {
-                      if (!user) {
-                        navigateToLogin(router);
-                        return;
-                      }
                       if (!book.uploadedAt) {
                         handleBookUpload(book);
                       } else if (!book.downloadedAt) {
@@ -282,9 +278,16 @@ const BookItem: React.FC<BookItemProps> = ({
                       }
                     }}
                   >
-                    {!book.uploadedAt && isReadestCloudStorageActive(settings) && (
-                      <LiaCloudUploadAltSolid size={iconSize15} />
-                    )}
+                    {!book.uploadedAt &&
+                      // Upload targets: the enabled file mirror, or Readest
+                      // Cloud when there is an account to write to. A signed-out
+                      // device has neither use nor destination for the latter —
+                      // showing the badge for it only queued a transfer that
+                      // failed with a sign-in prompt (see ACCOUNTLESS_BUILD).
+                      (getActiveFileSyncBackends(settings).length > 0 ||
+                        (!!user && isReadestCloudStorageActive(settings))) && (
+                        <LiaCloudUploadAltSolid size={iconSize15} />
+                      )}
                     {book.uploadedAt && !book.downloadedAt && (
                       <LiaCloudDownloadAltSolid size={iconSize15} />
                     )}

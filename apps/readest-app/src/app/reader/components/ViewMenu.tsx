@@ -31,6 +31,8 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useCloudSyncStatus } from '@/hooks/useCloudSyncStatus';
 import { getStyles } from '@/utils/style';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
+import { promptMissingSyncProvider } from '@/utils/accountless';
 import { navigateToLogin } from '@/utils/nav';
 import { getScrollGapAttr } from '@/utils/webtoon';
 import { applyPageTurnAttributes } from '@/app/reader/hooks/useCapturedTurn';
@@ -139,8 +141,15 @@ const ViewMenu: React.FC<ViewMenuProps> = ({
     // configured the row must sync, not bounce the user to a login they do not
     // need (#5910).
     if (syncStatus.needsSignIn) {
-      navigateToLogin(router);
       setIsDropdownOpen?.(false);
+      // FORK (ACCOUNTLESS_BUILD): `needsSignIn` here only means "Readest Cloud
+      // is the selected provider and nothing else is enabled" — there is no
+      // account to send the user to, so point at where sync is configured.
+      if (ACCOUNTLESS_BUILD) {
+        promptMissingSyncProvider();
+      } else {
+        navigateToLogin(router);
+      }
       return;
     }
     // One tap, every provider the user selected. Before #5910 this dispatched

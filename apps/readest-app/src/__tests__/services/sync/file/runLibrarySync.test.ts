@@ -310,9 +310,14 @@ describe('getReadyFileSyncBackends', () => {
     expect(getReadyFileSyncBackends(settings)).toEqual(['webdav', 'gdrive']);
   });
 
-  test('excludes everything when the plan gate pauses third-party sync', () => {
+  // FORK (ACCOUNTLESS_BUILD): the plan gate no longer pauses third-party sync —
+  // a signed-out device resolves to `free`, and that is exactly the state whose
+  // configured cloud storage has to keep running. The plan-aware pause path
+  // itself is still covered by cloudSyncProvider.test.ts, which mocks
+  // `isCloudSyncAllowed` directly.
+  test('a free (signed-out) plan still runs third-party sync', () => {
     setCachedUserPlan('free');
-    expect(getReadyFileSyncBackends(settings)).toEqual([]);
+    expect(getReadyFileSyncBackends(settings)).toEqual(['webdav', 'gdrive']);
   });
 
   test('rules icloud out off Apple platforms (canBackendRun false)', () => {

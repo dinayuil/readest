@@ -147,7 +147,10 @@ describe('ViewMenu sync row (issue #5910)', () => {
     expect(mockNavigateToLogin).not.toHaveBeenCalled();
   });
 
-  it('still routes to login when Readest Cloud is the only provider', () => {
+  // FORK (ACCOUNTLESS_BUILD): `needsSignIn` can still be true here (Readest
+  // Cloud is the selected provider and nothing else is enabled), but there is no
+  // account to route to — the row points at where sync is actually configured.
+  it('points at the cloud storage setting when Readest Cloud is the only provider', () => {
     mockSyncStatus = {
       providers: [
         { kind: 'readest', name: 'Readest Cloud', lastSyncedAt: 0, syncing: false, failed: false },
@@ -162,7 +165,8 @@ describe('ViewMenu sync row (issue #5910)', () => {
     render(<ViewMenu bookKey='book-1' />);
     fireEvent.click(screen.getByText('Sign in to Sync'));
 
-    expect(mockNavigateToLogin).toHaveBeenCalled();
+    expect(mockNavigateToLogin).not.toHaveBeenCalled();
+    expect(mockDispatch).toHaveBeenCalledWith('toast', expect.objectContaining({ type: 'info' }));
     expect(mockDispatch.mock.calls.map((call) => call[0])).not.toContain('push-file-sync');
     // A lone Readest Cloud provider is not worth naming — the row means what it
     // always meant.

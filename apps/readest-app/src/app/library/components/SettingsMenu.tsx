@@ -21,6 +21,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useCloudSyncStatus } from '@/hooks/useCloudSyncStatus';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { useTransferQueue } from '@/hooks/useTransferQueue';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { navigateToLogin, navigateToProfile } from '@/utils/nav';
 import { tauriHandleSetAlwaysOnTop, tauriHandleToggleFullScreen } from '@/utils/window';
 import { setAboutDialogVisible } from '@/components/AboutWindow';
@@ -292,7 +293,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
       )}
       onCancel={() => setIsDropdownOpen?.(false)}
     >
-      {user ? (
+      {/* FORK (ACCOUNTLESS_BUILD): the whole account area — the signed-in
+          header with its quota and account rows, and the signed-out Sign In
+          entry — is dropped. Manual sync stays reachable through the shelf's
+          pull-to-refresh and the reader's View menu; everything else in this
+          menu is account-independent. */}
+      {ACCOUNTLESS_BUILD ? null : user ? (
         <MenuItem
           label={
             userDisplayName

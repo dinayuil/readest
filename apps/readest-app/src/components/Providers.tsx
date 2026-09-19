@@ -21,6 +21,7 @@ import { useEinkMode } from '@/hooks/useEinkMode';
 import { getLocale } from '@/utils/misc';
 import { getDirFromUILanguage } from '@/utils/rtl';
 import { getAndroidPatchedViewportContent } from '@/utils/viewport';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import {
   getTelemetryDecision,
   rollIntoTelemetryPromptBucket,
@@ -145,12 +146,17 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
       appService.loadSettings().then(async (settings) => {
         const globalViewSettings = settings.globalViewSettings;
         const hadSettingsFile = await hadSettingsFilePromise.catch(() => false);
-        finalizeTelemetryDecision({
-          appService,
-          settings,
-          isNewUser: !hadSettingsFile,
-          onShowPrompt: () => setShowTelemetryConsent(true),
-        });
+        // Fork: telemetry is removed, so the one-time consent decision (and the
+        // "prompt 10% of new users" bucket) is skipped entirely. That also keeps
+        // the consent dialog from ever opening.
+        if (!ACCOUNTLESS_BUILD) {
+          finalizeTelemetryDecision({
+            appService,
+            settings,
+            isNewUser: !hadSettingsFile,
+            onShowPrompt: () => setShowTelemetryConsent(true),
+          });
+        }
         applyUILanguage(globalViewSettings.uiLanguage);
         // Seed the customTextureStore with the disk-loaded textures (preserving
         // their saved ids) so the boot-time applyBackgroundTexture below can

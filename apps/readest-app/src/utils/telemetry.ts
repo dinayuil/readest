@@ -1,4 +1,5 @@
 import posthog from 'posthog-js';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 
 export const TELEMETRY_OPT_OUT_KEY = 'readest-telemetry-opt-out';
 export const TELEMETRY_DECISION_KEY = 'readest-telemetry-decision';
@@ -29,12 +30,18 @@ export const rollIntoTelemetryPromptBucket = (rng: () => number = Math.random) =
 };
 
 export const captureEvent = (event: string, properties?: Record<string, unknown>) => {
+  // Fork: nothing is handed to PostHog, which `PHContext` never initializes.
+  // Belt-and-braces, and it keeps the "no telemetry here" intent greppable.
+  if (ACCOUNTLESS_BUILD) return;
   if (!hasOptedOutTelemetry()) {
     posthog.capture(event, properties);
   }
 };
 
 export const optInTelemetry = () => {
+  // Fork: the opt-in path is gone, so no surface (settings toggle, consent
+  // dialog, command palette) can switch telemetry back on.
+  if (ACCOUNTLESS_BUILD) return;
   localStorage.setItem(TELEMETRY_OPT_OUT_KEY, 'false');
   setTelemetryDecision('opt-in');
   posthog.opt_in_capturing();

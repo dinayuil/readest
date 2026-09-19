@@ -8,6 +8,7 @@ import { PiRobot, PiSpeakerHigh, PiSun, PiMoon } from 'react-icons/pi';
 import { TbSunMoon } from 'react-icons/tb';
 import { MdRefresh } from 'react-icons/md';
 import { IconType } from 'react-icons';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { stubTranslation as _ } from '@/utils/misc';
 
 export type CommandCategory = 'settings' | 'actions' | 'navigation';
@@ -855,12 +856,17 @@ export const buildCommandRegistry = (options: CommandRegistryOptions): CommandIt
     }),
   );
 
-  items.push(
-    createActionItem({
-      id: 'action.telemetry',
-      action: options.toggleTelemetry,
-    }),
-  );
+  // Fork: telemetry is gone, so the "Help improve Readest" command is not
+  // offered either — the label entry above stays so upstream's registry shape
+  // (and its tests) are untouched. See ACCOUNTLESS_BUILD in src/utils/access.ts.
+  if (!ACCOUNTLESS_BUILD) {
+    items.push(
+      createActionItem({
+        id: 'action.telemetry',
+        action: options.toggleTelemetry,
+      }),
+    );
+  }
 
   return items;
 };

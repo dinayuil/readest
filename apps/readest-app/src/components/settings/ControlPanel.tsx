@@ -26,6 +26,7 @@ import PageTurnerSettings from './PageTurnerSettings';
 import AnnotationToolbarCustomizer from './AnnotationToolbarCustomizer';
 import { DEFAULT_ANNOTATION_TOOLBAR_ITEMS } from '@/utils/annotationToolbar';
 import { canShareText } from '@/utils/share';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { optInTelemetry, optOutTelemetry } from '@/utils/telemetry';
 import KeyboardShortcutsSettings from './KeyboardShortcutsSettings';
 
@@ -588,14 +589,19 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
         />
       </BoxedList>
 
-      <BoxedList title={_('Privacy')} data-setting-id='settings.control.telemetry'>
-        <SettingsSwitchRow
-          label={_('Help improve Readest')}
-          description={isTelemetryEnabled ? _('Sharing anonymized statistics') : ''}
-          checked={isTelemetryEnabled}
-          onChange={toggleTelemetry}
-        />
-      </BoxedList>
+      {/* Fork: telemetry is gone, so its switch is not offered at all — see
+          ACCOUNTLESS_BUILD in src/utils/access.ts. The state and handler above
+          stay referenced, so upstream's component shape is untouched. */}
+      {!ACCOUNTLESS_BUILD && (
+        <BoxedList title={_('Privacy')} data-setting-id='settings.control.telemetry'>
+          <SettingsSwitchRow
+            label={_('Help improve Readest')}
+            description={isTelemetryEnabled ? _('Sharing anonymized statistics') : ''}
+            checked={isTelemetryEnabled}
+            onChange={toggleTelemetry}
+          />
+        </BoxedList>
+      )}
     </div>
   );
 };

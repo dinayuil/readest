@@ -3,6 +3,7 @@
 import posthog from 'posthog-js';
 import { ReactNode, useEffect } from 'react';
 import { PostHogProvider } from 'posthog-js/react';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { TELEMETRY_DECISION_KEY, TELEMETRY_OPT_OUT_KEY } from '@/utils/telemetry';
 import { getAppVersion } from '@/utils/version';
 
@@ -26,7 +27,18 @@ const posthogKey =
   process.env['NEXT_PUBLIC_POSTHOG_KEY'] ||
   atob(process.env['NEXT_PUBLIC_DEFAULT_POSTHOG_KEY_BASE64']!);
 
-if (typeof window !== 'undefined' && process.env['NODE_ENV'] === 'production' && posthogKey) {
+// Fork: telemetry is off for good — PostHog is never initialized. Upstream
+// already tolerates that state (it skips init in dev and whenever the key is
+// missing), so every `posthog.*` call elsewhere stays a harmless no-op and
+// nothing is ever sent: no capture, no /decide request. Guarding here rather
+// than at the call sites also covers installs whose saved `telemetryEnabled` is
+// still true, and any future capture added upstream.
+if (
+  !ACCOUNTLESS_BUILD &&
+  typeof window !== 'undefined' &&
+  process.env['NODE_ENV'] === 'production' &&
+  posthogKey
+) {
   posthog.init(posthogKey, {
     api_host: posthogUrl,
     person_profiles: 'always',

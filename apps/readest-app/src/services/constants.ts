@@ -209,7 +209,11 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   openLastBooks: false,
   lastOpenBooks: [],
   autoImportBooksOnOpen: false,
-  telemetryEnabled: true,
+  // Fork: PostHog telemetry is removed, not merely off by default — see
+  // ACCOUNTLESS_BUILD in src/utils/access.ts, the init guard in
+  // src/context/PHContext.tsx and the funnel guard in src/utils/telemetry.ts.
+  // This value only keeps the settings shape intact for older installs.
+  telemetryEnabled: false,
   discordRichPresenceEnabled: false,
   libraryViewMode: 'grid',
   librarySortBy: LibrarySortByType.Updated,

@@ -99,7 +99,8 @@ describe('buildCommandRegistry', () => {
     expect(actionIds).toContain('action.fullscreen');
     expect(actionIds).toContain('action.reload');
     expect(actionIds).toContain('action.about');
-    expect(actionIds).toContain('action.telemetry');
+    // Fork: telemetry is removed, so its command is not registered either.
+    expect(actionIds).not.toContain('action.telemetry');
   });
 
   it('should use the provided translation function for localized labels', () => {

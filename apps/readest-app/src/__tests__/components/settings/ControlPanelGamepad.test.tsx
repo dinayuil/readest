@@ -72,7 +72,13 @@ vi.mock('@/components/settings/PageTurnerSettings', () => ({
 }));
 
 vi.mock('@/utils/style', () => ({ getStyles: () => '' }));
-vi.mock('@/utils/config', () => ({ getMaxInlineSize: () => 720 }));
+vi.mock('@/utils/config', () => ({
+  getMaxInlineSize: () => 720,
+  // The fork's UI guards read ACCOUNTLESS_BUILD from @/utils/access, which pulls
+  // in @/services/constants — these two are evaluated at its module scope.
+  getDefaultMaxInlineSize: () => 720,
+  getDefaultMaxBlockSize: () => 720,
+}));
 vi.mock('@/app/reader/hooks/useCapturedTurn', () => ({
   applyPageTurnAttributes: vi.fn(),
 }));

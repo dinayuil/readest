@@ -94,7 +94,7 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 
 - `src/utils/accountless.ts` — fork 专用提示（"去设置里启用云存储"），书架与阅读器共用一份文案。
 - `src/__tests__/utils/access-accountless.test.ts` — 上述回归测试。
-- `.github/workflows/fork-android.yml` — 见第 6 节。
+- `.github/workflows/fork-build.yml` — Windows + Android 客户端构建，见第 6 节。
 
 ---
 
@@ -149,6 +149,9 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 ### 5.2 其它
 
 - [ ] **把存量的 `translationProvider` 迁移掉（仅影响观感）**：默认值改动只影响新装；老配置里仍是 `deepl`。翻译行为与两个选择器的显示都已经通过同步解析修正，但设置文件里存的值仍写着 `deepl`。彻底的做法是加一条 fork 迁移（`appService.runMigrations` 里 `< 20260919` 的版本闸门 + 一个小函数），把不能在本构建运行的值改写为首个可用者。优先级低。
+- Windows 客户端的自动更新指向官方（会把 fork 版替换掉）—— **构建配置里已处理**：`fork-build.yml` 写出的 `tauri.fork.conf.json` 把 `plugins.updater.endpoints` 覆盖为 `[]`（主配置里那两个是 `download.readest.com` 和官方 GitHub release）。更新检查会立即以插件的 `EmptyEndpoints` 失败，而前端的自动检查把失败当"没有更新"（`helpers/updater.ts` 的 catch 就是这个离线/不可达分支）。
+  - [ ] 残留 1：`hasUpdater` 仍为 true，所以"关于"窗口里**手动**点"检查更新"会看到报错（自动检查是静默的）。要彻底消除，需要在 Rust 侧禁用：`src-tauri/src/lib.rs` 的 `updater_disabled()` / `compute_updater_disabled()`（现成的运行时开关是环境变量 `READEST_DISABLE_UPDATER`，但它是**运行时**读取的，靠构建时设置无效）。代价是动 Rust 源码，且本地没有 Rust 工具链就无法编译验证，只能靠 CI。
+  - [ ] 残留 2（需要第一次构建时确认）：tauri 的 `--config` 合并对**数组**是"替换"还是"追加"我无法在本地验证。若是追加，官方 endpoints 会留在列表里、这条防护失效。**验证方法**：客户端跑起来后，如果仍弹"有新版本"或"关于"里显示官方版本号，就说明需要改用上面的 Rust 方案。
 
 - [ ] **遥测确认**：`apps/readest-app/.env` 里带着官方 PostHog 的默认 key，App 启动后可能把使用数据发到官方的 PostHog 项目。这个 fork 的用户可能不希望如此，需要确认上报开关（设置项/环境变量）并考虑关闭。
 - [ ] **WebDAV / S3 在网页版受浏览器跨域限制**：需要云存储侧返回 `Access-Control-Allow-*`（Nextcloud、Aliso 等可配置；S3/R2 需配 bucket CORS）。App（桌面/安卓）没有这个限制。若长期只在网页版用，可以考虑给 WebDAV 加一个同源代理。
@@ -158,19 +161,47 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 
 ---
 
-## 6. Android 构建
+## 6. 客户端构建（Windows + Android）
 
-官方 `.github/workflows/release.yml` / `nightly.yml` 都会打 Android 包，**但它们的签名步骤依赖仓库 secrets**（`ANDROID_KEY_BASE64`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`、`TAURI_SIGNING_PRIVATE_KEY`、以及上传用的 R2 凭据）。fork 里没有这些，直接跑会在 50 分钟构建的最后一步失败。
+### 为什么需要自己的工作流
 
-所以本 fork 有专用工作流：**`.github/workflows/fork-android.yml`**（新文件，不参与官方合并）。
+官方 `release.yml` / `nightly.yml` 两个客户端都会打，**但它们的签名与上传步骤依赖仓库 secrets**：Android 的 keystore（`ANDROID_KEY_BASE64` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`）、更新签名（`TAURI_SIGNING_PRIVATE_KEY`）、上传用的 R2 凭据。fork 里没有这些，直接跑会在构建的最后一步失败。而且更早就会卡住：`tauri.conf.json` 开着 `createUpdaterArtifacts: true`，没有签名密钥**连 Windows 构建都过不去**。
 
-**用法**：GitHub → 你的 fork → Actions → 左侧 "Fork Android APK" → Run workflow → 选分支和 ABI → 跑完在 Artifacts 里下载 `readest-fork-android-<abi>`。
+所以本 fork 有一个专用工作流：**`.github/workflows/fork-build.yml`**（新文件，不参与官方合并，**不需要任何 secrets**）。
 
-- 产出的是**调试签名 APK**，可以直接侧载安装（不需要你准备任何签名密钥）。
-- ABI 选 `universal` 兼容所有机型；选 `arm64` 体积更小，覆盖现代手机。
-- 首次冷构建约 50 分钟（上游实测），之后有 rust-cache 会快很多。
-- 想改成发布签名版：在 `src-tauri/gen/android` 生成后写入 `keystore.properties` 并用 `apksigner`/`tauri signer` 签名，或把 keystore 与密码放进 fork 的 secrets，再照抄上游 release.yml 的签名步骤。
-- 本地构建需要 Rust + Android SDK + NDK 28.2.13676358（首次同样约 50 分钟）；只装 Rust 是跑不起来的，不建议。
+### 用法
+
+GitHub → 你的 fork → Actions → 左侧 **"Fork Build (Windows + Android)"** → Run workflow：
+
+| 输入 | 说明 |
+| --- | --- |
+| `ref` | 要构建的分支 / 标签 / commit；留空 = 触发时所在的分支 |
+| `build` | `all`（默认）、`windows`、`android`；只跑一个可以省时间 |
+| `windows_arch` | `x64`（默认）、`arm64` |
+| `android_abi` | `universal`（默认，兼容所有机型）、`arm64`（体积更小） |
+
+跑完在 Artifacts 里下载：`readest-fork-windows-<arch>`、`readest-fork-android-<abi>`。两个 job 并行，耗时取较慢的那个。
+
+### Windows 产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `Readest-fork-<版本>-<arch>-setup.exe` | NSIS 安装包 |
+| `Readest-fork-<版本>-<arch>-portable.exe` | 单文件便携版，免安装 |
+
+- **未签名**：构建时现场生成 `src-tauri/tauri.fork-unsigned.conf.json`（只含 `{"bundle":{"createUpdaterArtifacts":false}}`，由 `--config` 合并进主配置），所以不需要 `TAURI_SIGNING_PRIVATE_KEY`。代价是首次运行会有 SmartScreen 警告，点"仍要运行"即可。
+- 便携版是**第二次构建**（同一个应用，只是 `NEXT_PUBLIC_PORTABLE_APP=true`）。它会覆盖掉安装包，所以工作流先把安装包拷出来、再构建便携版（上游 nightly.yml 里有同样的注释）。
+- **更新源已清空**：构建用的 `tauri.fork.conf.json` 同时把 `plugins.updater.endpoints` 覆盖为 `[]`，客户端不会再去官方发布页检查更新 —— 细节与两个残留见 5.2。
+
+### Android 产物
+
+`Readest-fork-<版本>-<universal|arm64>-debug.apk` —— **调试签名**，可直接侧载安装，不需要你准备任何密钥。
+
+想改成发布签名版：在 `src-tauri/gen/android` 生成后写入 `keystore.properties`，用 `apksigner` / `tauri signer` 签名；或把 keystore 与密码放进 fork 的 secrets，再照抄上游 release.yml 的签名步骤。
+
+### 时间
+
+两者首次冷构建都在 40–60 分钟量级（以 Rust 编译为主），之后有 rust-cache 会快很多。本地构建 Windows 需要 Rust（msvc toolchain）+ VS 生成工具，Android 还要 Java 17 + Android SDK + NDK 28.2.13676358 —— 有 CI 就没必要在本地折腾。
 
 ---
 

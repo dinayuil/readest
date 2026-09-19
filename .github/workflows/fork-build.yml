@@ -1,0 +1,293 @@
+# Fork-only client builds: Windows and Android, in one workflow.
+#
+# Why this exists: upstream's release.yml / nightly.yml build the same clients,
+# but their signing and upload steps need repository secrets a fork does not have
+# (TAURI_SIGNING_PRIVATE_KEY for the updater artifacts, the Android keystore, the
+# R2 credentials for the upload leg), so a fork run dies at the very end of a
+# ~50-minute build. Nothing here needs a secret:
+#   * Windows: `--config src-tauri/tauri.fork.conf.json` (written below) turns
+#     `bundle.createUpdaterArtifacts` off, so the NSIS installer and the portable
+#     exe build without the signing key. They are UNSIGNED, so Windows
+#     SmartScreen warns on first run - expected for a self-built fork.
+#   * Android: a debug build, signed with the debug keystore Gradle generates,
+#     which sideloads fine.
+#
+# The same config clears `plugins.updater.endpoints`. The base config points them
+# at the OFFICIAL releases, so a client built here would otherwise offer to
+# "update" itself INTO the official build and discard this fork's changes. See
+# apps/readest-app/TODOS.fork.md.
+#
+# This is a new file, so an upstream merge never conflicts with it.
+name: Fork Build (Windows + Android)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to build (empty = the branch this workflow ran from)'
+        required: false
+        default: ''
+      build:
+        description: 'Which client(s) to build'
+        type: choice
+        options:
+          - all
+          - windows
+          - android
+        default: all
+      windows_arch:
+        description: 'Windows architecture'
+        type: choice
+        options:
+          - x64
+          - arm64
+        default: x64
+      android_abi:
+        description: 'Android ABI set: universal covers every device, arm64 is smaller'
+        type: choice
+        options:
+          - universal
+          - arm64
+        default: universal
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    if: inputs.build == 'all' || inputs.build == 'windows'
+    runs-on: windows-latest
+    # The Rust compile dominates and Windows is the slowest desktop target; the
+    # first cold run is tens of minutes. rust-cache shortens repeats a lot.
+    timeout-minutes: 90
+    env:
+      WINDOWS_RUST_TARGET: "${{ inputs.windows_arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}"
+      # NSIS names the installer after the architecture this way: x64 / arm64.
+      WINDOWS_ARCH_LABEL: "${{ inputs.windows_arch == 'arm64' && 'arm64' || 'x64' }}"
+      # Set by upstream for the desktop build: the Next export OOMs against the
+      # runner's default Node heap.
+      NODE_OPTIONS: '--max-old-space-size=8192'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: ${{ env.WINDOWS_RUST_TARGET }}
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: fork-windows-${{ inputs.windows_arch }}-cargo
+
+      # A partial config file merged over tauri.conf.json, exactly how upstream
+      # layers src-tauri/tauri.macos-nonstore.conf.json. A path (rather than an
+      # inline JSON string) is also the form the CLI documents unambiguously.
+      #
+      # Two overrides, both for this fork:
+      #   * createUpdaterArtifacts=false drops the updater signatures, so the
+      #     build needs no TAURI_SIGNING_PRIVATE_KEY.
+      #   * plugins.updater.endpoints=[] removes the OFFICIAL release endpoints
+      #     the base config points at. Without this the built client would offer
+      #     to "update" itself into the official build, discarding the fork. The
+      #     check now fails immediately (the plugin's EmptyEndpoints error) and
+      #     the app swallows it: `checkForAppUpdates` treats a failed auto-check
+      #     as "no update" (helpers/updater.ts), which is its documented
+      #     offline/unreachable-host path.
+      - name: write the fork bundle-config override
+        shell: bash
+        run: |
+          cat > apps/readest-app/src-tauri/tauri.fork.conf.json <<'JSON'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false
+            },
+            "plugins": {
+              "updater": {
+                "endpoints": []
+              }
+            }
+          }
+          JSON
+          cat apps/readest-app/src-tauri/tauri.fork.conf.json
+
+      - name: build the NSIS installer
+        working-directory: apps/readest-app
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm tauri build \
+            --target "$WINDOWS_RUST_TARGET" \
+            --bundles nsis \
+            --config src-tauri/tauri.fork.conf.json
+
+      # Staged BEFORE the portable rebuild: that second run overwrites the
+      # installer in target/<target>/release/bundle/nsis/ (upstream's comment in
+      # nightly.yml documents the same trap).
+      - name: stage the installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/readest-app/package.json').version")
+          installer="target/${WINDOWS_RUST_TARGET}/release/bundle/nsis/Readest_${version}_${WINDOWS_ARCH_LABEL}-setup.exe"
+          [ -f "$installer" ] || { echo "::error::$installer not found"; exit 1; }
+          cp "$installer" "apps/readest-app/Readest-fork-${version}-${WINDOWS_ARCH_LABEL}-setup.exe"
+          ls -lh apps/readest-app/Readest-fork-*.exe
+
+      - name: build the portable exe
+        working-directory: apps/readest-app
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Same app, one .env.local flag: upstream ships this as the
+          # no-installation single-file build.
+          echo "NEXT_PUBLIC_PORTABLE_APP=true" >> .env.local
+          pnpm tauri build \
+            --target "$WINDOWS_RUST_TARGET" \
+            --bundles nsis \
+            --config src-tauri/tauri.fork.conf.json
+
+      - name: stage the portable exe
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/readest-app/package.json').version")
+          # Browsers refuse to download zips containing an exe, so upstream ships
+          # the bare exe, same here.
+          exe="target/${WINDOWS_RUST_TARGET}/release/readest.exe"
+          [ -f "$exe" ] || { echo "::error::$exe not found"; exit 1; }
+          cp "$exe" "apps/readest-app/Readest-fork-${version}-${WINDOWS_ARCH_LABEL}-portable.exe"
+          ls -lh apps/readest-app/Readest-fork-*.exe
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: readest-fork-windows-${{ inputs.windows_arch }}
+          path: apps/readest-app/Readest-fork-*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    if: inputs.build == 'all' || inputs.build == 'android'
+    runs-on: ubuntu-latest
+    # Two Rust/NDK link passes upstream measured at ~50 min on a cold cache.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          # The legacy `tools` package (part of the action's default) no longer
+          # exists in the SDK repository and makes sdkmanager fail.
+          packages: 'platform-tools'
+
+      - name: install NDK
+        # Pinned to the version upstream builds against; the Rust/NDK ABI
+        # expectations are not portable across NDK majors.
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: fork-android-${{ inputs.android_abi }}-cargo
+
+      # NO .env.local: the committed .env already carries the base64 defaults
+      # (Supabase URL/anon key, PostHog, Stripe publishable key) and
+      # NEXT_PUBLIC_APP_PLATFORM comes from .env.tauri via the `build` script's
+      # `dotenv -e .env.tauri`. Nothing here needs a repository secret.
+
+      - name: init the Android project
+        working-directory: apps/readest-app
+        run: |
+          set -euo pipefail
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          # Branding only; the generated default icon is used if this is
+          # unavailable. Cosmetic, so it must not fail the build.
+          [ -f ../../data/icons/readest-book.png ] && pnpm tauri icon ../../data/icons/readest-book.png || true
+
+      - name: build the debug APK
+        working-directory: apps/readest-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -euo pipefail
+          # `--debug` is what makes the APK installable without a release
+          # keystore: Gradle signs it with the generated debug key.
+          if [ "${{ inputs.android_abi }}" = "arm64" ]; then
+            pnpm tauri android build --debug -t aarch64
+          else
+            pnpm tauri android build --debug
+          fi
+
+      - name: stage the APK
+        working-directory: apps/readest-app
+        run: |
+          set -euo pipefail
+          # `-print -quit` rather than `| head -n 1`: under `pipefail` an early
+          # `head` exit hands `find` a SIGPIPE and fails the step.
+          apk=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
+          if [ -z "$apk" ]; then
+            echo "::error::no APK was produced"
+            exit 1
+          fi
+          version=$(node -p "require('./package.json').version")
+          cp "$apk" "Readest-fork-${version}-${{ inputs.android_abi }}-debug.apk"
+          echo "staged $apk -> Readest-fork-${version}-${{ inputs.android_abi }}-debug.apk"
+          ls -lh Readest-fork-*.apk
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: readest-fork-android-${{ inputs.android_abi }}
+          path: apps/readest-app/Readest-fork-*-debug.apk
+          if-no-files-found: error
+          retention-days: 30

@@ -251,9 +251,38 @@ jobs:
           set -euo pipefail
           rm -rf src-tauri/gen/android
           pnpm tauri android init
-          # Branding only; the generated default icon is used if this is
-          # unavailable. Cosmetic, so it must not fail the build.
-          [ -f ../../data/icons/readest-book.png ] && pnpm tauri icon ../../data/icons/readest-book.png || true
+          pnpm tauri icon ../../data/icons/readest-book.png
+          # REQUIRED, and easy to miss: src-tauri/gen/android is PARTIALLY
+          # TRACKED in git. The repo ships its own app/build.gradle.kts
+          # (compileSdk 36, the sentry/webkit/appcompat dependencies, the rust
+          # plugin wiring), AndroidManifest.xml, MainActivity.kt, the icon and
+          # splash resources, and a unit test; `rm -rf` above deletes them and
+          # `init` lays down the CLI's template instead. Checking out restores
+          # the repo's own versions on top of the generated project, which is
+          # exactly why upstream runs this line right after init + icon.
+          git checkout .
+
+      # Guard + environment dump, so a failure names its own cause.
+      #
+      # The `missingDimensionStrategy` marker is the load-bearing one: the
+      # repo-local plugin `:tauri-plugin-native-bridge` declares a `store`
+      # dimension with `foss` / `googleplay` variants, and only the repo's own
+      # app/build.gradle.kts tells Gradle which one to consume. If the template
+      # file is in place instead, Gradle dies with "cannot choose between
+      # fossDebugApiElements and googleplayDebugApiElements" — checked here so
+      # that mistake fails with a message that explains itself.
+      - name: check the generated Android project
+        working-directory: apps/readest-app
+        run: |
+          set -euo pipefail
+          grep -q 'missingDimensionStrategy("store"' src-tauri/gen/android/app/build.gradle.kts \
+            || { echo "::error::the repo's android build.gradle.kts was not restored by git checkout"; exit 1; }
+          grep -q 'usesCleartextTraffic' src-tauri/gen/android/app/build.gradle.kts \
+            || { echo "::error::the repo's android build.gradle.kts was not restored by git checkout"; exit 1; }
+          ls src-tauri/gen/android
+          java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
 
       - name: build the debug APK
         working-directory: apps/readest-app

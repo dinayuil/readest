@@ -151,7 +151,7 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 - [ ] **把存量的 `translationProvider` 迁移掉（仅影响观感）**：默认值改动只影响新装；老配置里仍是 `deepl`。翻译行为与两个选择器的显示都已经通过同步解析修正，但设置文件里存的值仍写着 `deepl`。彻底的做法是加一条 fork 迁移（`appService.runMigrations` 里 `< 20260919` 的版本闸门 + 一个小函数），把不能在本构建运行的值改写为首个可用者。优先级低。
 - Windows 客户端的自动更新指向官方（会把 fork 版替换掉）—— **构建配置里已处理**：`fork-build.yml` 写出的 `tauri.fork.conf.json` 把 `plugins.updater.endpoints` 覆盖为 `[]`（主配置里那两个是 `download.readest.com` 和官方 GitHub release）。更新检查会立即以插件的 `EmptyEndpoints` 失败，而前端的自动检查把失败当"没有更新"（`helpers/updater.ts` 的 catch 就是这个离线/不可达分支）。
   - [ ] 残留 1：`hasUpdater` 仍为 true，所以"关于"窗口里**手动**点"检查更新"会看到报错（自动检查是静默的）。要彻底消除，需要在 Rust 侧禁用：`src-tauri/src/lib.rs` 的 `updater_disabled()` / `compute_updater_disabled()`（现成的运行时开关是环境变量 `READEST_DISABLE_UPDATER`，但它是**运行时**读取的，靠构建时设置无效）。代价是动 Rust 源码，且本地没有 Rust 工具链就无法编译验证，只能靠 CI。
-  - [ ] 残留 2（需要第一次构建时确认）：tauri 的 `--config` 合并对**数组**是"替换"还是"追加"我无法在本地验证。若是追加，官方 endpoints 会留在列表里、这条防护失效。**验证方法**：客户端跑起来后，如果仍弹"有新版本"或"关于"里显示官方版本号，就说明需要改用上面的 Rust 方案。
+  - ✅ 残留 2 已消除：`pnpm tauri android build --help` 里 CLI 对 `-c/--config` 的原文是 "Configurations are merged in the order they are provided, which means **a particular value overwrites previous values when a config key-value pair conflicts**" —— 冲突键是**覆盖**语义（数组同理），所以 `endpoints: []` 确实会替换掉官方那两个地址。
 
 - [ ] **遥测确认**：`apps/readest-app/.env` 里带着官方 PostHog 的默认 key，App 启动后可能把使用数据发到官方的 PostHog 项目。这个 fork 的用户可能不希望如此，需要确认上报开关（设置项/环境变量）并考虑关闭。
 - [ ] **WebDAV / S3 在网页版受浏览器跨域限制**：需要云存储侧返回 `Access-Control-Allow-*`（Nextcloud、Aliso 等可配置；S3/R2 需配 bucket CORS）。App（桌面/安卓）没有这个限制。若长期只在网页版用，可以考虑给 WebDAV 加一个同源代理。
@@ -198,6 +198,29 @@ GitHub → 你的 fork → Actions → 左侧 **"Fork Build (Windows + Android)"
 `Readest-fork-<版本>-<universal|arm64>-debug.apk` —— **调试签名**，可直接侧载安装，不需要你准备任何密钥。
 
 想改成发布签名版：在 `src-tauri/gen/android` 生成后写入 `keystore.properties`，用 `apksigner` / `tauri signer` 签名；或把 keystore 与密码放进 fork 的 secrets，再照抄上游 release.yml 的签名步骤。
+
+⚠️ **`src-tauri/gen/android` 里有被 git 跟踪的定制文件（15 个），`pnpm tauri android init` 之后必须跑 `git checkout .`**：
+
+`app/build.gradle.kts`（`compileSdk = 36`、Sentry / webkit / appcompat 依赖、`rust` 插件接线）、`AndroidManifest.xml`、`MainActivity.kt`、图标与启动图资源、`values/themes.xml`，以及一个单测 `KeyLearnCaptureTest.kt` 都是**仓库自带**的。工作流里的顺序是官方那套：
+
+```
+rm -rf src-tauri/gen/android     # 清掉上次生成物
+pnpm tauri android init          # 生成脚手架（此时上面这些被 CLI 模板覆盖）
+pnpm tauri icon ../../data/icons/readest-book.png
+git checkout .                   # ← 关键：把仓库自带的那些文件恢复回来
+```
+
+漏掉最后一步，Gradle 用的就是 CLI 模板，打出来的会是**另一个 App**（模板的 manifest / 入口 Activity / Gradle 配置），而不是这个项目。工作流里另加了一步自检（grep `missingDimensionStrategy("store")` 与 `usesCleartextTraffic`）来兜住这个坑。**已经踩过一次**，症状是：
+
+```
+Could not determine the dependencies of task ':app:compileUniversalDebugJavaWithJavac'.
+> Could not resolve project :tauri-plugin-native-bridge.
+   > However we cannot choose between the following variants of project :tauri-plugin-native-bridge:
+       - fossDebugApiElements
+       - googleplayDebugApiElements
+```
+
+原因：仓库本地插件 `src-tauri/plugins/tauri-plugin-native-bridge` 声明了 `store` 维度与 `foss` / `googleplay` 两个 flavor，只有仓库自带的 `app/build.gradle.kts` 里那句 `missingDimensionStrategy("store", storeFlavor)` 告诉 Gradle 消费哪一个（默认 `foss`）；模板文件没有这句，于是变体歧义。
 
 ### 时间
 

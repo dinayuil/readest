@@ -9,9 +9,35 @@ import {
 } from '@/services/translators';
 import { getFromCache, storeInCache, UseTranslatorOptions } from '@/services/translators';
 import { polish, preprocess } from '@/services/translators';
+import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import { eventDispatcher } from '@/utils/event';
 import { getLocale } from '@/utils/misc';
 import { useTranslation } from './useTranslation';
+
+/**
+ * The provider that will actually serve the next call: the requested one when it
+ * can run here, else the first available fallback.
+ *
+ * Resolved SYNCHRONOUSLY, not in an effect. `translate` reads the resolved
+ * provider from state, so a deferred resolution left a one-render window where a
+ * caller that fires on mount — the annotator popup, translate-in-range — sent
+ * its first request to the *requested* provider before the fallback landed.
+ * With a persisted `deepl` (changing the default does not rewrite settings a
+ * user already has) that window was a hard throw on the first paragraph of
+ * every book: "Authentication token is required for DeepL translation".
+ */
+const resolveAvailableProvider = (name: string | undefined, hasToken: boolean): TranslatorName => {
+  const available = getTranslators()
+    // FORK (ACCOUNTLESS_BUILD): a provider whose `authRequired` is set is served
+    // by Readest's backend against a signed-in account, so it can never run in
+    // this build — not even as a fallback.
+    .filter((t) => !ACCOUNTLESS_BUILD || !t.authRequired)
+    .filter((t) => isTranslatorAvailable(t, hasToken));
+  const selected = available.find((t) => t.name === name) ?? available[0];
+  // Nothing available at all: keep the request as-is so the provider itself
+  // reports why (quota reached, relay down) instead of silently switching.
+  return (selected?.name ?? name ?? 'deepl') as TranslatorName;
+};
 
 export function useTranslator({
   provider = 'deepl',
@@ -23,8 +49,14 @@ export function useTranslator({
   const _ = useTranslation();
   const { token } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState(provider);
-  const [translator, setTransltor] = useState(() => getTranslator(provider));
+  // Seeded from the resolver, so the very first `translate()` call already hits
+  // a provider this build can run.
+  const [selectedProvider, setSelectedProvider] = useState(() =>
+    resolveAvailableProvider(provider, !!token),
+  );
+  const [translator, setTransltor] = useState(() =>
+    getTranslator(resolveAvailableProvider(provider, !!token)),
+  );
   const [translators] = useState(() => getTranslators());
 
   useEffect(() => {
@@ -32,10 +64,7 @@ export function useTranslator({
   }, [provider, sourceLang, targetLang]);
 
   useEffect(() => {
-    const availableTranslators = getTranslators().filter((t) => isTranslatorAvailable(t, !!token));
-    const selectedTranslator =
-      availableTranslators.find((t) => t.name === provider) || availableTranslators[0]!;
-    const selectedProviderName = selectedTranslator.name as TranslatorName;
+    const selectedProviderName = resolveAvailableProvider(provider, !!token);
     setTransltor(getTranslator(selectedProviderName));
     setSelectedProvider(selectedProviderName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,5 +194,12 @@ export function useTranslator({
     translator,
     translators,
     loading,
+    /**
+     * The provider the next call will actually use, after the availability
+     * fallback — NOT necessarily the requested one. Surfaces that render a
+     * provider picker must show this, or they display a provider that is not in
+     * their own option list (a persisted `deepl` on an accountless build).
+     */
+    selectedProvider,
   };
 }

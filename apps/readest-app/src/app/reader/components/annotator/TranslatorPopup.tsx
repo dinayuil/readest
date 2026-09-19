@@ -64,7 +64,11 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   // network error), shown under the generic message so a failure can be
   // diagnosed from the popup itself (#5823).
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
-  const { translate, translator, translators } = useTranslator({
+  // `selectedProvider` — not the requested `provider` — drives the picker and
+  // the credit line: with a persisted `deepl` on an accountless build the two
+  // differ, and showing the requested one would render an empty <select> (its
+  // option was filtered out) beside a "Translated by ." label.
+  const { translate, translator, translators, selectedProvider } = useTranslator({
     provider,
     sourceLang,
     targetLang,
@@ -227,15 +231,15 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
             surface, so its provider select can sit flush on the same color. */}
         <div className='flex shrink-0 items-center justify-between gap-2 rounded-b-lg px-4 py-2'>
           <div className='line-clamp-1 text-xs text-base-content/60'>
-            {provider &&
+            {selectedProvider &&
               !loading &&
               !error &&
               _('Translated by {{provider}}.', {
-                provider: providers.find((p) => p.name === provider)?.label,
+                provider: providers.find((p) => p.name === selectedProvider)?.label,
               })}
           </div>
           <Select
-            value={provider}
+            value={selectedProvider}
             onChange={handleProviderChange}
             options={providers.map(({ name: value, label, disabled }) => ({
               value,

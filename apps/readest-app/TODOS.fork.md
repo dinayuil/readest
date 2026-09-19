@@ -82,9 +82,13 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 | --- | --- |
 | `src/services/constants.ts` | 默认翻译服务 `deepl` → `google` |
 | `src/components/settings/LangPanel.tsx` | 设置里的翻译服务下拉框滤掉 `authRequired` 的服务，不再出现 "DeepL (Login Required)" |
-| `src/app/reader/components/annotator/TranslatorPopup.tsx` | 划词翻译弹窗用同一套过滤，两个选择器保持一致 |
+| `src/app/reader/components/annotator/TranslatorPopup.tsx` | 划词翻译弹窗用同一套过滤；底部选择器与"Translated by"文案改用**实际生效**的 provider |
+| `src/hooks/useTranslator.ts` | provider 解析改为**同步**（原先在 effect 里，晚一帧），并统一走同一个可用性过滤器 |
+| `src/__tests__/hooks/useTranslator.test.ts`（新增） | 回归测试：首帧/首次翻译就落在可用 provider 上 |
 
 过滤依据是**静态标志** `authRequired`，不是当前 token：所以 Android 上 Bing/Yandex（直连、免账号）会保留，网页版保留 Google。
+
+**为什么必须同步解析**：弹窗是挂载即发起翻译的，而 `translate()` 读的是 state。原先"渲染一帧后才纠正 provider"的做法，会让第一次请求打到设置里存的 provider —— 而**改默认值不会重写用户已有的设置**，老配置里存的 `deepl` 在未登录时直接抛 "Authentication token is required for DeepL translation"。所以解析必须发生在首次渲染内，且不能只靠默认值。
 
 ### 3.5 新增文件（永不与官方冲突）
 
@@ -143,6 +147,8 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 **现成替代**：`services/bookorbit/statsPush.ts` 会把同样的统计推给自建的 BookOrbit 服务，**不需要 Readest 账号**，现在就能用。
 
 ### 5.2 其它
+
+- [ ] **把存量的 `translationProvider` 迁移掉（仅影响观感）**：默认值改动只影响新装；老配置里仍是 `deepl`。翻译行为与两个选择器的显示都已经通过同步解析修正，但设置文件里存的值仍写着 `deepl`。彻底的做法是加一条 fork 迁移（`appService.runMigrations` 里 `< 20260919` 的版本闸门 + 一个小函数），把不能在本构建运行的值改写为首个可用者。优先级低。
 
 - [ ] **遥测确认**：`apps/readest-app/.env` 里带着官方 PostHog 的默认 key，App 启动后可能把使用数据发到官方的 PostHog 项目。这个 fork 的用户可能不希望如此，需要确认上报开关（设置项/环境变量）并考虑关闭。
 - [ ] **WebDAV / S3 在网页版受浏览器跨域限制**：需要云存储侧返回 `Access-Control-Allow-*`（Nextcloud、Aliso 等可配置；S3/R2 需配 bucket CORS）。App（桌面/安卓）没有这个限制。若长期只在网页版用，可以考虑给 WebDAV 加一个同源代理。

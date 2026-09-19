@@ -9,8 +9,15 @@
 #     `bundle.createUpdaterArtifacts` off, so the NSIS installer and the portable
 #     exe build without the signing key. They are UNSIGNED, so Windows
 #     SmartScreen warns on first run - expected for a self-built fork.
-#   * Android: a debug build, signed with the debug keystore Gradle generates,
-#     which sideloads fine.
+#   * Android: `release` by default, signed with the key from the
+#     ANDROID_KEY_BASE64 / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD repository
+#     secrets - the same names upstream's release.yml reads, so a fork that fills
+#     them in can run upstream's release.yml unchanged. A release APK is ~4x
+#     smaller than the debug one (arm64 lands around the official ~85 MB) and,
+#     because the key is stable, it updates an earlier install in place instead
+#     of demanding an uninstall. Pick `debug` for a much faster build and a much
+#     bigger file, signed by Gradle's per-runner debug key. With no secrets set,
+#     `release` is refused rather than shipping an uninstallable unsigned APK.
 #
 # The same config clears `plugins.updater.endpoints`. The base config points them
 # at the OFFICIAL releases, so a client built here would otherwise offer to
@@ -43,12 +50,19 @@ on:
           - arm64
         default: x64
       android_abi:
-        description: 'Android ABI set: universal covers every device, arm64 is smaller'
+        description: 'Android ABI set: universal covers every device, arm64 is 4x smaller'
         type: choice
         options:
           - universal
           - arm64
         default: universal
+      android_variant:
+        description: 'Android build type: release is small and needs the signing secrets, debug is fast and huge'
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
 
 permissions:
   contents: read
@@ -284,39 +298,80 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
 
-      - name: build the debug APK
+      # The repo's app/build.gradle.kts reads keyAlias / password / storeFile from
+      # keystore.properties (rootProject = gen/android) and applies that signing
+      # config to BOTH build types, so a stable key here also makes `debug` builds
+      # upgrade in place. Same secret names as upstream's release.yml, and the
+      # step no-ops when they are not set, so the workflow still works without
+      # them (falling back to Gradle's per-runner debug key).
+      - name: restore the fork signing key
+        working-directory: apps/readest-app/src-tauri/gen/android
+        env:
+          KEY_B64: ${{ secrets.ANDROID_KEY_BASE64 }}
+        if: env.KEY_B64 != ''
+        run: |
+          set -euo pipefail
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          # The secret holds the keystore base64-encoded, because a secret value
+          # is text and a .jks is binary.
+          base64 -d <<< "$KEY_B64" > "$RUNNER_TEMP/fork-keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/fork-keystore.jks" >> keystore.properties
+
+      # Mirrors upstream's release.yml: `pnpm tauri android build [-t aarch64]`.
+      # `--apk` skips AAB generation, which nothing here consumes.
+      - name: build the APK
         working-directory: apps/readest-app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
         run: |
           set -euo pipefail
-          # `--debug` is what makes the APK installable without a release
-          # keystore: Gradle signs it with the generated debug key.
+          variant=""
+          if [ "${{ inputs.android_variant }}" = "debug" ]; then
+            variant="--debug"
+          fi
           if [ "${{ inputs.android_abi }}" = "arm64" ]; then
-            pnpm tauri android build --debug -t aarch64
+            # shellcheck disable=SC2086
+            pnpm tauri android build --apk $variant -t aarch64
           else
-            pnpm tauri android build --debug
+            # shellcheck disable=SC2086
+            pnpm tauri android build --apk $variant
           fi
 
       - name: stage the APK
         working-directory: apps/readest-app
         run: |
           set -euo pipefail
+          variant="${{ inputs.android_variant }}"
+          out=src-tauri/gen/android/app/build/outputs/apk
           # `-print -quit` rather than `| head -n 1`: under `pipefail` an early
           # `head` exit hands `find` a SIGPIPE and fails the step.
-          apk=$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print -quit)
+          apk=$(find "$out" -name "app-universal-$variant.apk" -print -quit)
+          [ -n "$apk" ] || apk=$(find "$out" -name '*.apk' -print -quit)
           if [ -z "$apk" ]; then
             echo "::error::no APK was produced"
             exit 1
           fi
+          # AGP names a release APK that has no signing config `*-unsigned.apk`.
+          # That build installs nowhere, so fail loudly instead of uploading it:
+          # either the secrets are missing/misnamed, or the build type should be
+          # `debug`.
+          case "$(basename "$apk")" in
+            *unsigned.apk)
+              echo "::error::$(basename "$apk") is unsigned - check that"
+              echo "ANDROID_KEY_BASE64 / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD"
+              echo "exist with exactly those names, or pick the debug build type"
+              exit 1
+              ;;
+          esac
           version=$(node -p "require('./package.json').version")
-          cp "$apk" "Readest-fork-${version}-${{ inputs.android_abi }}-debug.apk"
-          echo "staged $apk -> Readest-fork-${version}-${{ inputs.android_abi }}-debug.apk"
+          cp "$apk" "Readest-fork-${version}-${{ inputs.android_abi }}-${variant}.apk"
+          echo "staged $apk -> Readest-fork-${version}-${{ inputs.android_abi }}-${variant}.apk"
           ls -lh Readest-fork-*.apk
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: readest-fork-android-${{ inputs.android_abi }}
-          path: apps/readest-app/Readest-fork-*-debug.apk
+          path: apps/readest-app/Readest-fork-*.apk
           if-no-files-found: error
           retention-days: 30

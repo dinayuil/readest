@@ -195,9 +195,19 @@ GitHub → 你的 fork → Actions → 左侧 **"Fork Build (Windows + Android)"
 
 ### Android 产物
 
-`Readest-fork-<版本>-<universal|arm64>-debug.apk` —— **调试签名**，可直接侧载安装，不需要你准备任何密钥。
+`Readest-fork-<版本>-<universal|arm64>-<release|debug>.apk`，构建类型在 Actions 里用 `android_variant` 选：
 
-想改成发布签名版：在 `src-tauri/gen/android` 生成后写入 `keystore.properties`，用 `apksigner` / `tauri signer` 签名；或把 keystore 与密码放进 fork 的 secrets，再照抄上游 release.yml 的签名步骤。
+- **release（默认）**：体积约等于官方包（官方 v0.12.8：arm64 84.7 MB / universal 310.8 MB）。它**必须签名**，用的是自己的永久 keystore，通过仓库 secrets 注入，变量名与官方 `release.yml` **完全一致**，所以以后想直接跑官方发布流程也能复用同一把钥匙：
+
+  | Secret | 内容 |
+  |---|---|
+  | `ANDROID_KEY_BASE64` | `keytool -genkeypair` 产出的 `.jks` 做 **base64 编码后的那一行文本**（Secret 只能存文本，`.jks` 是二进制，工作流里再 `base64 -d` 还原成文件） |
+  | `ANDROID_KEY_ALIAS` | 生成时的 `-alias`，例如 `fork` |
+  | `ANDROID_KEY_PASSWORD` | 生成时的 `-storepass` 口令（仓库那段签名配置对 key 与 store 用同一个口令） |
+
+  工作流把三者写成 `keystore.properties`（`keyAlias` / `password` / `storeFile`），仓库自带的 `app/build.gradle.kts` 会对 **release 与 debug 两种构建类型都套用**这个签名配置，所以两种包型可以互相覆盖安装。**这把钥匙要长期保留**：换了钥匙就无法升级已安装的包，只能卸载重装（卸载会清掉本地书库与配置）。未配置 secrets 时该步骤自动跳过，此时选 `release` 会因产出 `*-unsigned.apk`（装不上）而**明确报错**，不会静默给你一个废包。
+
+- **debug**：构建快得多（Rust 只编 debug profile），但体积是 release 的数倍 —— `.so` 带完整调试符号，加上 `app/build.gradle.kts:73-76` 的 `keepDebugSymbols` 和 universal 的 4 份 `.so`，解压后能到 2 GB 量级。**只给自己设备装的话，把 `android_abi` 选 `arm64` 就立刻降到约 1/4。**
 
 ⚠️ **`src-tauri/gen/android` 里有被 git 跟踪的定制文件（15 个），`pnpm tauri android init` 之后必须跑 `git checkout .`**：
 

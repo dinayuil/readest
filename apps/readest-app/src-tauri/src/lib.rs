@@ -22,6 +22,7 @@ use tauri_plugin_fs::FsExt;
 
 #[cfg(desktop)]
 use tauri::{Listener, Url};
+mod backup_zip;
 #[cfg(target_os = "macos")]
 mod browser_cookies_macos;
 mod browser_fetch;
@@ -32,6 +33,8 @@ mod dir_scanner;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod discord_rpc;
 mod epub_parser;
+#[cfg(all(target_os = "linux", any(feature = "cef", test)))]
+mod linux_display;
 mod localsend;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -333,14 +336,54 @@ fn is_updater_disabled() -> bool {
     updater_disabled()
 }
 
-// Record the WebView engine/version (parsed from the app's User-Agent) so Sentry
-// events can be correlated with WebView version. Called once from
-// `NativeAppService.init()`; no-op when Sentry is disabled.
+// Record the WebView engine/version so Sentry events can be correlated with
+// the WebView build. Chromium's UA-Reduction freezes the User-Agent to a stub
+// on Windows WebView2 (e.g. "152.0.0.0"), so prefer the version reported by
+// the runtime itself and keep the engine from the User-Agent parse. Called
+// once from `NativeAppService.init()`; no-op when Sentry is disabled.
 #[tauri::command]
 fn set_webview_info(user_agent: String) {
-    if let Some((engine, version)) = sentry_config::parse_webview_info(&user_agent) {
-        sentry_config::set_webview_info(engine, version);
+    let parsed = sentry_config::parse_webview_info(&user_agent);
+    let version =
+        runtime_webview_version().or_else(|| parsed.as_ref().map(|(_, version)| version.clone()));
+    if let (Some((engine, _)), Some(version)) = (&parsed, version) {
+        sentry_config::set_webview_info(engine.clone(), version);
     }
+}
+
+#[derive(serde::Serialize)]
+struct WebViewInfo {
+    engine: String,
+    version: String,
+}
+
+// The WebView engine/version for the About window's display. The runtime
+// query is only needed on Windows, where the User-Agent is reduced to a
+// stub; the other platforms keep their User-Agent-derived labels.
+#[tauri::command]
+fn get_webview_version() -> Option<WebViewInfo> {
+    if std::env::consts::OS != "windows" {
+        return None;
+    }
+    Some(WebViewInfo {
+        engine: "WebView2".to_string(),
+        version: runtime_webview_version()?,
+    })
+}
+
+// `tauri::webview_version()` is wry's query. On Linux the app runs on CEF, where
+// it would report the WebKitGTK version instead, and referencing it keeps the
+// WebKitGTK libraries linked, which the Nix package strips so Chromium's zygote
+// stays single-threaded. CEF's User-Agent carries the full Chromium version.
+#[cfg(not(target_os = "linux"))]
+fn runtime_webview_version() -> Option<String> {
+    let version = tauri::webview_version().ok()?;
+    Some(version.trim().to_string()).filter(|version| !version.is_empty())
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_webview_version() -> Option<String> {
+    None
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -366,6 +409,15 @@ type AppRuntime = tauri::Wry;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg_attr(all(feature = "cef", target_os = "linux"), tauri::cef_entry_point)]
 pub fn run() {
+    // The CEF runtime forces X11, even on Wayland. Check before initializing
+    // Tauri, which otherwise hides the missing display behind CreateWindow.
+    // cef_entry_point routes helper processes away before reaching this code.
+    #[cfg(all(feature = "cef", target_os = "linux"))]
+    if let Err(message) = linux_display::check_display(std::env::var_os("DISPLAY").as_deref()) {
+        eprintln!("{message}");
+        std::process::exit(1);
+    }
+
     // Initialize Sentry as early as possible so panics during startup are
     // captured. `None` DSN (unset SENTRY_DSN) => disabled, so local and fork
     // builds don't report. This client covers Rust panics and the events the
@@ -478,11 +530,14 @@ pub fn run() {
             get_environment_variable,
             get_executable_dir,
             set_webview_info,
+            get_webview_version,
             #[cfg(desktop)]
             is_updater_disabled,
             allow_paths_in_scopes,
             cover_thumbnail::optimize_cover_thumbnails,
             dir_scanner::read_dir,
+            backup_zip::write_backup_zip,
+            backup_zip::extract_backup_zip,
             epub_parser::parse_epub_metadata,
             epub_parser::extract_epub_cover_full,
             epub_parser::parse_epub_full,

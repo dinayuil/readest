@@ -2,6 +2,7 @@ import { BookFormat } from '@/types/book';
 import { Collection, Contributor, Identifier, LanguageMap } from '@/utils/book';
 import { configureZip } from '@/utils/zip';
 import { stripDuplicateMarker } from '@/utils/path';
+import type { WidePagesOptions } from '@/utils/spread';
 import * as epubcfi from 'foliate-js/epubcfi.js';
 
 export const CFI = epubcfi;
@@ -151,10 +152,14 @@ export const EXTS: Record<BookFormat, string> = {
   FBZ: 'fbz',
   TXT: 'txt',
   MD: 'md',
+  HTML: 'html',
   // ABS books stream from the server and never have a real on-disk file, so
   // this extension is never used to write or look up a file. It exists only
   // to satisfy the Record<BookFormat, string> exhaustiveness check.
   ABS: 'abs',
+  // Same for OPDS audio: the tracks are fetched from the catalog, never stored.
+  OPDSAUDIO: 'opdsaudio',
+  BOOKORBIT: 'bookorbit',
 };
 
 export const MIMETYPES: Record<BookFormat, string[]> = {
@@ -168,8 +173,13 @@ export const MIMETYPES: Record<BookFormat, string[]> = {
   FBZ: ['application/x-zip-compressed-fb2', 'application/zip'],
   TXT: ['text/plain'],
   MD: ['text/markdown', 'text/x-markdown'],
+  HTML: ['text/html'],
   // Never matched against a real download; see the EXTS.ABS comment above.
   ABS: ['application/vnd.audiobookshelf'],
+  // OPDS audio is identified from the acquisition link (services/opds/formats),
+  // never by looking a BookFormat up here.
+  OPDSAUDIO: [],
+  BOOKORBIT: [],
 };
 
 export interface DocumentLoaderOptions {
@@ -183,11 +193,12 @@ export interface DocumentLoaderOptions {
    */
   nativeFilePath?: string;
   /**
-   * Measure a comic's pages so each wide one (a double-page spread stored as
-   * one image) gets a spread of its own. It reads every page's header, so
-   * only the reader asks for it.
+   * Lay out each wide page of a comic (a double-page spread stored as one
+   * image) as a spread of its own. The pages are measured up front, reading
+   * every page's header, unless `known` holds what an earlier open found; and
+   * each again as it loads, which `onFound` hears of. Only the reader asks.
    */
-  detectWidePages?: boolean;
+  widePages?: WidePagesOptions;
 }
 
 type PDFJSGlobal = {
@@ -233,12 +244,12 @@ export { WorkerMessageHandler };`,
 export class DocumentLoader {
   private file: File;
   private nativeFilePath?: string;
-  private detectWidePages: boolean;
+  private widePages?: WidePagesOptions;
 
   constructor(file: File, options: DocumentLoaderOptions = {}) {
     this.file = file;
     this.nativeFilePath = options.nativeFilePath;
-    this.detectWidePages = options.detectWidePages ?? false;
+    this.widePages = options.widePages;
   }
 
   private async isZip(): Promise<boolean> {
@@ -460,6 +471,15 @@ export class DocumentLoader {
     );
   }
 
+  private isHtml(): boolean {
+    const name = this.filename.toLowerCase();
+    return (
+      this.file.type.startsWith('text/html') ||
+      name.endsWith(`.${EXTS.HTML}`) ||
+      name.endsWith('.htm')
+    );
+  }
+
   public async open(): Promise<{ book: BookDoc; format: BookFormat }> {
     let book = null;
     let format: BookFormat = 'EPUB';
@@ -478,6 +498,12 @@ export class DocumentLoader {
       if (this.isMd()) {
         const { makeMarkdownBook } = await import('@/utils/md');
         return { book: await makeMarkdownBook(this.file), format: 'MD' };
+      }
+      // A saved web page (SingleFile, "Save as HTML") is rendered the same way:
+      // Readability keeps the article and its inlined images, drops the chrome.
+      if (this.isHtml()) {
+        const { makeHtmlBook } = await import('@/utils/html');
+        return { book: await makeHtmlBook(this.file), format: 'HTML' };
       }
       if (this.isTxt()) {
         const { TxtToEpubConverter } = await import('@/utils/txt');
@@ -503,12 +529,19 @@ export class DocumentLoader {
 
         if (this.isCBZ()) {
           const { makeComicBook } = await import('foliate-js/comic-book.js');
-          book = await makeComicBook(loader, this.file);
-          format = 'CBZ';
-          if (this.detectWidePages) {
-            const { markWidePages } = await import('@/utils/spread');
-            await markWidePages(book.sections, this.file, entries, this.nativeFilePath);
+          if (this.widePages) {
+            const { measureWidePages, trackWidePages } = await import('@/utils/spread');
+            const { known, onFound } = this.widePages;
+            const pages = trackWidePages(loader, onFound);
+            book = await makeComicBook(pages.loader, this.file);
+            pages.attach(
+              book.sections,
+              known ?? (await measureWidePages(this.file, entries, this.nativeFilePath)),
+            );
+          } else {
+            book = await makeComicBook(loader, this.file);
           }
+          format = 'CBZ';
         } else if (this.isFBZ()) {
           const entry = entries.find((entry) => entry.filename.endsWith(`.${EXTS.FB2}`));
           const blob = await loader.loadBlob((entry ?? entries[0]!).filename);

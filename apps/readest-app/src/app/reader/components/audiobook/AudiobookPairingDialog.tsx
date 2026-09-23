@@ -138,7 +138,8 @@ const AudiobookPairingDialog = ({ bookKey, bookDoc, onClose }: AudiobookPairingD
     step === 'review' && !hasPreparedSource ? (association?.chapters ?? []) : importedAudioChapters;
   // Where the audio for a preview comes from: the source being prepared, else
   // the saved pairing whose mapping is being edited.
-  const previewAbsSource = preparedAbs?.source ?? (hasPreparedSource ? null : association?.source);
+  const sourceForPreview = preparedAbs?.source ?? (hasPreparedSource ? null : association?.source);
+  const previewAbsSource = sourceForPreview?.kind === 'audiobookshelf' ? sourceForPreview : null;
   const filteredAbsBooks = useMemo(() => {
     const normalized = absQuery.trim().toLocaleLowerCase();
     if (!normalized) return absBooks;
@@ -450,16 +451,21 @@ const AudiobookPairingDialog = ({ bookKey, bookDoc, onClose }: AudiobookPairingD
   const renderSummary = () => {
     if (!association) return null;
     const totalDuration = association.files.reduce((total, file) => total + file.duration, 0);
-    const streamedFrom = association.source
-      ? (findABSServerById(association.source.serverId)?.name ?? 'Audiobookshelf')
-      : null;
+    const streamedFrom =
+      association.source?.kind === 'audiobookshelf'
+        ? (findABSServerById(association.source.serverId)?.name ?? 'Audiobookshelf')
+        : association.source?.kind === 'bookorbit'
+          ? 'BookOrbit'
+          : null;
     return (
       <>
         <SurfaceHeader
           title={_('Paired Audiobook')}
           description={
+            // Source-neutral: this dialog now covers BookOrbit pairings too,
+            // and the server's own name is shown in the row below either way.
             streamedFrom
-              ? _('Manage the Audiobookshelf audiobook paired with this ebook.')
+              ? _('Manage the streamed audiobook paired with this ebook.')
               : _('Manage the local recording paired with this ebook.')
           }
         />

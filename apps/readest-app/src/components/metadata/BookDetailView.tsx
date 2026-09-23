@@ -14,9 +14,11 @@ import {
 import { Book } from '@/types/book';
 import { BookMetadata } from '@/libs/document';
 import { openExternalUrl } from '@/utils/open';
+import { sanitizeHtml } from '@/utils/sanitize';
 import { getBookGoodreadsQuery, getGoodreadsSearchUrl } from '@/utils/goodreads';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useDefaultBookshelfCovers } from '@/hooks/useDefaultBookshelfCovers';
 import { useEnv } from '@/context/EnvContext';
 import {
   formatAuthors,
@@ -75,6 +77,7 @@ const BookDetailView: React.FC<BookDetailViewProps> = ({
   const _ = useTranslation();
   const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
+  const { skeuomorphicCovers } = useDefaultBookshelfCovers();
   const [subjectsExpanded, setSubjectsExpanded] = useState(false);
   const { coverSrc, openCoverViewer, closeCoverViewer } = useBookCoverViewer(book);
   const subjects = getContributorNames(metadata?.subject);
@@ -127,7 +130,7 @@ const BookDetailView: React.FC<BookDetailViewProps> = ({
           className='me-6 aspect-[28/41] h-32 shadow-lg sm:me-10'
           onClick={openCoverViewer}
         >
-          <BookCover mode='list' book={book} showSpine={settings.librarySkeuomorphicCovers} />
+          <BookCover mode='list' book={book} showSpine={skeuomorphicCovers} />
         </button>
         {coverSrc && <BookCoverViewer src={coverSrc} onClose={closeCoverViewer} />}
         <div className='title-author flex h-32 flex-col justify-between'>
@@ -470,7 +473,7 @@ const BookDetailView: React.FC<BookDetailViewProps> = ({
               <p
                 className='text-neutral-content prose prose-sm max-w-full whitespace-pre-line text-sm'
                 dangerouslySetInnerHTML={{
-                  __html: metadata?.description || _('No description available'),
+                  __html: sanitizeHtml(metadata?.description || _('No description available')),
                 }}
               ></p>
             </div>

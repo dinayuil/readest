@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import Popup from '@/components/Popup';
 import { Position } from '@/utils/sel';
+import { useEnv } from '@/context/EnvContext';
+import { useReaderStore } from '@/store/readerStore';
+import { saveViewSettings } from '@/helpers/settings';
 import { useAuth } from '@/context/AuthContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -26,6 +29,7 @@ const generateTranslatorLangs = () => {
 const translatorLangs = generateTranslatorLangs();
 
 interface TranslatorPopupProps {
+  bookKey: string;
   text: string;
   position: Position;
   trianglePosition: Position;
@@ -41,6 +45,7 @@ interface TranslatorType {
 }
 
 const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
+  bookKey,
   text,
   position,
   trianglePosition,
@@ -50,9 +55,13 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
 }) => {
   const _ = useTranslation();
   const { token } = useAuth();
+  const { envConfig } = useEnv();
+  const { getViewSettings } = useReaderStore();
   const { settings, setSettings } = useSettingsStore();
   const [providers, setProviders] = useState<TranslatorType[]>([]);
-  const [sourceLang, setSourceLang] = useState('AUTO');
+  const [sourceLang, setSourceLang] = useState(
+    getViewSettings(bookKey)?.translateSourceLang ?? 'AUTO',
+  );
   const [targetLang, setTargetLang] = useState(settings.globalReadSettings.translateTargetLang);
   const [provider, setProvider] = useState(settings.globalReadSettings.translationProvider);
   const [translation, setTranslation] = useState<string | null>(null);
@@ -76,6 +85,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
 
   const handleSourceLangChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     setSourceLang(event.target.value);
+    saveViewSettings(envConfig, bookKey, 'translateSourceLang', event.target.value, true, false);
   };
 
   const handleTargetLangChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -128,7 +138,10 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
           throw new Error('No translation found');
         }
 
-        setTranslation(translatedText);
+        // Decode provider entities once while keeping any markup literal.
+        const decoder = document.createElement('textarea');
+        decoder.innerHTML = translatedText.replaceAll('<', '&lt;');
+        setTranslation(decoder.value);
         if (sourceLang === 'AUTO' && detectedSource) {
           setDetectedSourceLang(detectedSource);
         }

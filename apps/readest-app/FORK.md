@@ -37,6 +37,7 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 - 之所以改这个常量而不是用 `SELF_HOSTED` 环境变量：环境变量要在**每个构建目标**（Windows 本地、Android workflow、以后任何构建）都记得设置，漏设就静默失效；改常量同样是一行，但在所有构建下确定生效，而且官方注释本身就把这个常量称作"整个开关"。
 - 之所以没有把 `isReadestCloudEnabled()` 硬关成 `false`：启用任一云存储后端后，官方云同步的**派生默认值**（`settings.readestCloud.enabled ?? !hasAnyThirdPartyEnabled(settings)`）自己就会变成关闭，已经够用；硬关会让 13 个上游单测失去意义。这条依赖已写成回归测试 `src/__tests__/utils/access-accountless.test.ts`，被改坏会立刻报错。
 - 同一个开关也**停掉遥测**（PostHog 完全不初始化、上报入口被拦、界面开关与命令面板动作一并撤掉），见 3.6。
+- 同一个开关也**停掉应用内更新检查**（含桌面 Tauri updater、安卓那条手工请求、nightly 通道），见 3.7。
 
 ---
 
@@ -116,6 +117,32 @@ export const CLOUD_SYNC_REQUIRES_PREMIUM = !ACCOUNTLESS_BUILD; // 由它派生�
 
 遗留（可接受）：`posthog-js` 仍留在 bundle 里（未初始化、不出网）；旧安装的 localStorage 决策键可能残留（无副作用）；`sentry`（崩溃上报）是另一条独立通道，本次未动。
 
+### 3.7 停掉更新检查（2 个文件）
+
+更新检查有**两条互不相干的出网路径**，只堵一条没用：
+
+| 路径 | 走哪里 | 由什么配置 |
+| --- | --- | --- |
+| 桌面（Win / macOS / Linux） | Tauri updater 插件 | `src-tauri/tauri.conf.json` 的 `plugins.updater.endpoints` |
+| **安卓** | 前端自己 `fetch` | `src/services/constants.ts` 的 `READEST_UPDATER_FILE`（`https://download.readest.com/releases/latest.json`，写死的常量） |
+| nightly 通道 | 前端自己 `fetch` 两份 manifest | 同上两个常量 |
+
+所以构建时把 `endpoints` 覆盖成 `[]` 只能静音 Windows，**安卓完全不看这个配置**——这正是"已经改了构建配置，APK 仍然弹官方更新"的原因。
+
+彻底做法是一处源头开关：`src/utils/access.ts` 新增 `APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD`，`src/helpers/updater.ts` 的 `checkForAppUpdates()`（顺带覆盖安卓分支与 nightly 通道）和 `checkAppReleaseNotes()` 在函数入口直接返回 `false`：
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/utils/access.ts` | 新增 `APP_UPDATES_ENABLED`，由 `ACCOUNTLESS_BUILD` 派生 |
+| `src/helpers/updater.ts` | 两个入口早返回：不发请求、不写 `lastAppUpdateCheck` 时间戳、不弹更新窗 |
+| `src/__tests__/helpers/updater.test.ts` | mock 这个开关（`vi.hoisted`，默认 ON 保留上游用例），新增 5 个用例断言 OFF 时零出网 |
+
+为什么不走"构建时环境变量"（`NEXT_PUBLIC_DISABLE_UPDATER`）：它只把 `appService.hasUpdater` 置为 false，**每一处构建目标都要记得设**，漏一个就是静默失效（§2 里同一条理由）；而且 `app/reader/page.tsx` 里 `hasUpdater === false` 的分支会改去调 `checkAppReleaseNotes()`——还是打官方服务器。改常量一行，所有平台、所有构建都确定生效。
+
+**为什么必须连官方包也不能"（假装）更新"**：本 fork 用自己的 keystore 签名，官方 APK 装不上 —— Android 会以 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`（签名不一致）直接拒绝覆盖安装，最坏情况是把 fork 装好好书库给弄丢。这条推送除了误导没有第二种结果。
+
+保留（可接受）：设置里的 "Check for updates automatically" 与 nightly 通道开关仍在（`ControlPanel`），因为 `hasUpdater` 未改动；点了也没有任何出网行为。想彻底隐藏再去动那一处。
+
 ---
 
 ## 4. 能同步 / 不能同步
@@ -176,7 +203,7 @@ GitHub → 你的 fork → Actions → 左侧 **"Fork Build (Windows + Android)"
 
 - **未签名**：构建时现场生成 `src-tauri/tauri.fork-unsigned.conf.json`（只含 `{"bundle":{"createUpdaterArtifacts":false}}`，由 `--config` 合并进主配置），所以不需要 `TAURI_SIGNING_PRIVATE_KEY`。代价是首次运行会有 SmartScreen 警告，点"仍要运行"即可。
 - 便携版是**第二次构建**（同一个应用，只是 `NEXT_PUBLIC_PORTABLE_APP=true`）。它会覆盖掉安装包，所以工作流先把安装包拷出来、再构建便携版（上游 nightly.yml 里有同样的注释）。
-- **更新源已清空**：构建用的 `tauri.fork.conf.json` 同时把 `plugins.updater.endpoints` 覆盖为 `[]`，客户端不会再去官方发布页检查更新 —— 细节与两个残留见 `TODOS.fork.md` 的「其它」。
+- **更新检查已关**：源码层由 `APP_UPDATES_ENABLED` 关闭（见 §3.7），所有平台一律不出网。构建用的 `tauri.fork.conf.json` 另外把 `plugins.updater.endpoints` 覆盖为 `[]`（桌面路径的第二道防线；对安卓无效，别指望它）。
 
 ### Android 产物
 

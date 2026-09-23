@@ -72,6 +72,30 @@ export const isCloudSyncInPlan = (plan: UserPlan, customizationPurchased: boolea
 export const ACCOUNTLESS_BUILD = true;
 
 /**
+ * Whether this build may talk to any app-update host at all.
+ *
+ * The updater has TWO independent paths, and clearing one does not clear the
+ * other: desktop goes through the Tauri updater plugin (its endpoints live in
+ * `src-tauri/tauri.conf.json`), while Android bypasses the plugin entirely and
+ * fetches `https://download.readest.com/releases/latest.json` by hand in
+ * `helpers/updater.ts`. That is why emptying `plugins.updater.endpoints` for a
+ * build silences the Windows client and leaves the APK still offering updates.
+ *
+ * OFF in this fork (derived from {@link ACCOUNTLESS_BUILD}), for two reasons:
+ * there is no release channel of our own to upgrade into, and an upstream
+ * build cannot install over this one anyway — the APK is signed with our own
+ * key, so Android rejects the official APK with
+ * INSTALL_FAILED_UPDATE_INCOMPATIBLE (signature mismatch). The best case of an
+ * unguarded check is therefore a popup that leads nowhere.
+ *
+ * Every network access involved (`checkForAppUpdates`, including the nightly
+ * channel's own manifest fetches, and `checkAppReleaseNotes`) hangs off this
+ * ONE flag, so flipping {@link ACCOUNTLESS_BUILD} back restores stock
+ * behaviour everywhere at once.
+ */
+export const APP_UPDATES_ENABLED = !ACCOUNTLESS_BUILD;
+
+/**
  * Master switch for the third-party cloud-sync premium paywall. ON: cloud
  * sync (WebDAV / Google Drive / S3) requires a {@link CLOUD_SYNC_PLANS} plan —
  * free users see the provider rows with a Premium badge and an upgrade route

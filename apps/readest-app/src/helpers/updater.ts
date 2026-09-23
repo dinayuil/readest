@@ -8,6 +8,11 @@ import { TranslationFunc } from '@/hooks/useTranslation';
 import { setUpdaterWindowVisible } from '@/components/UpdaterWindow';
 import { isTauriAppPlatform } from '@/services/environment';
 import { getAppVersion, isUpdateNewer } from '@/utils/version';
+// See APP_UPDATES_ENABLED: this build has no update channel of its own, and an
+// upstream release cannot install over it (own signing key), so nothing here
+// may contact download.readest.com. Guarding the two entry points also covers
+// the nightly channel's manifest fetches, which are reached only from here.
+import { APP_UPDATES_ENABLED } from '@/utils/access';
 import {
   CHECK_UPDATE_INTERVAL_SEC,
   READEST_CHANGELOG_FILE,
@@ -140,6 +145,9 @@ export const checkForAppUpdates = async (
   isAutoCheck = true,
   updateChannel: 'stable' | 'nightly' = 'stable',
 ): Promise<boolean> => {
+  // Fork: return before touching the network, and before writing a check
+  // timestamp — there is nothing to poll and no update channels configured.
+  if (!APP_UPDATES_ENABLED) return false;
   const lastCheck = localStorage.getItem(LAST_CHECK_KEY);
   const now = Date.now();
   if (isAutoCheck && lastCheck && now - parseInt(lastCheck, 10) < CHECK_UPDATE_INTERVAL_SEC * 1000)
@@ -218,6 +226,9 @@ export const getLastShownReleaseNotesVersion = () => {
 };
 
 export const checkAppReleaseNotes = async (isAutoCheck = true) => {
+  // Fork: same reason as checkForAppUpdates — the changelog lives on the same
+  // official host, and it documents releases this build cannot install.
+  if (!APP_UPDATES_ENABLED) return false;
   const currentVersion = getAppVersion();
   const lastShownVersion = getLastShownReleaseNotesVersion();
   if ((lastShownVersion && semver.gt(currentVersion, lastShownVersion)) || !isAutoCheck) {

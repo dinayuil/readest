@@ -60,6 +60,18 @@ vi.mock('@/services/constants', () => ({
   READEST_NIGHTLY_UPDATER_FILE: 'https://example.com/nightly/latest.json',
 }));
 
+// Fork switch (utils/access). Mocked mutable so the upstream cases below still
+// exercise the real decision logic (flag ON), while the last block asserts this
+// build's OFF path. Mocking the module also keeps supabase out of this file.
+const { mockAppUpdatesEnabled } = vi.hoisted(() => ({
+  mockAppUpdatesEnabled: { value: true },
+}));
+vi.mock('@/utils/access', () => ({
+  get APP_UPDATES_ENABLED() {
+    return mockAppUpdatesEnabled.value;
+  },
+}));
+
 import {
   checkForAppUpdates,
   checkAppReleaseNotes,
@@ -77,6 +89,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  mockAppUpdatesEnabled.value = true;
   mockIsTauriAppPlatform = false;
   mockAppVersion = '1.0.0';
   MockWebviewWindowLastArgs.length = 0;
@@ -424,6 +437,65 @@ describe('updater', () => {
 
     test('equal versions return false', () => {
       expect(semver.gt('1.0.0', '1.0.0')).toBe(false);
+    });
+  });
+
+  // ── fork: this build has no update channel of its own ──────────
+  describe('APP_UPDATES_ENABLED = false (this fork)', () => {
+    beforeEach(() => {
+      mockAppUpdatesEnabled.value = false;
+    });
+
+    test('Android never contacts the official update host', async () => {
+      mockOsType.mockReturnValue('android');
+      // A manual check plus a long-past interval used to reach the network.
+      localStorage.setItem('lastAppUpdateCheck', '0');
+
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
+
+      expect(mockTauriFetch).not.toHaveBeenCalled();
+      expect(mockSetUpdaterWindowVisible).not.toHaveBeenCalled();
+    });
+
+    test('desktop never calls the updater plugin', async () => {
+      mockOsType.mockReturnValue('macos');
+      mockCheck.mockResolvedValue({ version: '2.0.0' });
+
+      await expect(checkForAppUpdates(dummyTranslate, false)).resolves.toBe(false);
+
+      expect(mockCheck).not.toHaveBeenCalled();
+      expect(MockWebviewWindowLastArgs).toHaveLength(0);
+    });
+
+    test('the nightly channel does not read its manifests either', async () => {
+      mockOsType.mockReturnValue('android');
+      mockOsArch.mockReturnValue('aarch64');
+
+      await expect(checkForAppUpdates(dummyTranslate, false, 'nightly')).resolves.toBe(false);
+
+      expect(mockTauriFetch).not.toHaveBeenCalled();
+    });
+
+    test('no check timestamp is written, so nothing is left polling', async () => {
+      mockOsType.mockReturnValue('android');
+
+      await checkForAppUpdates(dummyTranslate, true);
+
+      expect(localStorage.getItem('lastAppUpdateCheck')).toBeNull();
+    });
+
+    test('release notes never fetch the official changelog', async () => {
+      mockAppVersion = '2.0.0';
+      setLastShownReleaseNotesVersion('1.0.0');
+      mockIsTauriAppPlatform = true;
+      const mockFetchFn = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal('fetch', mockFetchFn);
+
+      await expect(checkAppReleaseNotes(false)).resolves.toBe(false);
+
+      expect(mockFetchFn).not.toHaveBeenCalled();
+      expect(mockTauriFetch).not.toHaveBeenCalled();
+      expect(mockSetUpdaterWindowVisible).not.toHaveBeenCalled();
     });
   });
 });

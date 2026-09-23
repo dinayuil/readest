@@ -28,9 +28,9 @@
 ## 2. 其它
 
 - [ ] **把存量的 `translationProvider` 迁移掉（仅影响观感）**：默认值改动只影响新装；老配置里仍是 `deepl`。翻译行为与两个选择器的显示都已经通过同步解析修正，但设置文件里存的值仍写着 `deepl`。彻底的做法是加一条 fork 迁移（`appService.runMigrations` 里 `< 20260919` 的版本闸门 + 一个小函数），把不能在本构建运行的值改写为首个可用者。优先级低。
-- Windows 客户端的自动更新指向官方（会把 fork 版替换掉）—— **构建配置里已处理**：`fork-build.yml` 写出的 `tauri.fork.conf.json` 把 `plugins.updater.endpoints` 覆盖为 `[]`（主配置里那两个是 `download.readest.com` 和官方 GitHub release）。更新检查会立即以插件的 `EmptyEndpoints` 失败，而前端的自动检查把失败当"没有更新"（`helpers/updater.ts` 的 catch 就是这个离线/不可达分支）。
-  - [ ] 残留 1：`hasUpdater` 仍为 true，所以"关于"窗口里**手动**点"检查更新"会看到报错（自动检查是静默的）。要彻底消除，需要在 Rust 侧禁用：`src-tauri/src/lib.rs` 的 `updater_disabled()` / `compute_updater_disabled()`（现成的运行时开关是环境变量 `READEST_DISABLE_UPDATER`，但它是**运行时**读取的，靠构建时设置无效）。代价是动 Rust 源码，且本地没有 Rust 工具链就无法编译验证，只能靠 CI。
-  - ✅ 残留 2 已消除：`pnpm tauri android build --help` 里 CLI 对 `-c/--config` 的原文是 "Configurations are merged in the order they are provided, which means **a particular value overwrites previous values when a config key-value pair conflicts**" —— 冲突键是**覆盖**语义（数组同理），所以 `endpoints: []` 确实会替换掉官方那两个地址。
+- ✅ **更新检查已关（含安卓）**：Windows 侧原本靠构建配置把 `plugins.updater.endpoints` 覆盖为 `[]` 了，但**安卓根本不看那份配置** —— 它自己 `fetch` 写死的 `https://download.readest.com/releases/latest.json`，所以 fork APK 照样弹官方更新。现在在源码层用 `APP_UPDATES_ENABLED`（由 `ACCOUNTLESS_BUILD` 派生）把 `checkForAppUpdates()`（含安卓分支与 nightly 通道）和 `checkAppReleaseNotes()` 一并早返回，零出网 —— 详见 `FORK.md` §3.7，那里也记了"官方包本来就装不上"（签名不一致 → `INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。
+  - [ ] 残留 1 已降级：`helpers/updater.ts` 现在连手动检查都直接返回 `false`，"关于"窗口点"检查更新"显示"已是最新"而不再是报错（原先那条要动 Rust 才能修）。`hasUpdater` 仍为 true，所以那颗按钮还在；想把它和设置里的自动更新 / nightly 开关一起隐藏，再去改 `AboutWindow.tsx` 的更新状态块与 `ControlPanel.tsx`。**改组件时记得补 `@/utils/access` 的 mock** —— §3.6 移除遥测那次就是这样踩到的（access 在模块作用域会被求值）。
+  - [ ] 残留 2（提醒）：构建配置里的 `endpoints: []` 现在只剩防御作用，可以留着也可以删；但**不能**因为"构建配置已经处理了更新"就把源码开关去掉 —— 安卓路径不认那份配置。
 
 - ✅ **遥测已移除**：`.env` 里虽然仍带着官方 PostHog 的默认 key，但客户端**不再初始化 PostHog**（`PHContext` 的守卫），上报入口、设置里的开关和命令面板动作都一并撤掉 —— 详见 `FORK.md` §3.6。
 - [ ] **WebDAV / S3 在网页版受浏览器跨域限制**：需要云存储侧返回 `Access-Control-Allow-*`（Nextcloud、Aliso 等可配置；S3/R2 需配 bucket CORS）。App（桌面/安卓）没有这个限制。若长期只在网页版用，可以考虑给 WebDAV 加一个同源代理。

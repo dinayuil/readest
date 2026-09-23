@@ -253,10 +253,51 @@ Could not determine the dependencies of task ':app:compileUniversalDebugJavaWith
 ## 6. 与官方同步（merge 提示）
 
 ```bash
-git remote add upstream https://github.com/readest/readest.git
-git fetch upstream
-git merge upstream/main        # 在 fork 分支上
+# 一次性：把官方仓库加为 upstream（SSH 或 HTTPS 二选一，已加过就不用再跑）
+git remote add upstream git@github.com:readest/readest.git
+# git remote add upstream https://github.com/readest/readest.git
+git remote -v                  # origin = 你的 fork，upstream = 官方
+
+# 每次同步
+git fetch upstream             # 只下载，不动工作区，随便跑
+git log --oneline lite..upstream/main   # 看看落后了多少个提交
+git merge upstream/main        # 在 fork 分支（lite）上合并官方
 grep -rn ACCOUNTLESS_BUILD apps/readest-app/src   # 逐处复核
 ```
 
+`git fetch upstream` 是纯下载，不会改任何本地文件，可以先放心跑。真正改变工作区的是后面的 `merge`（想线性历史就用 `git rebase upstream/main`，但会重写 fork 的提交）。冲突时优先保官方那侧的实现，再把 fork 的 1 行守卫重新加回去 —— 因为所有 fork 逻辑都挂在 `ACCOUNTLESS_BUILD` 这一个词上，grep 一遍不会漏。
+
 冲突面主要在 UI 组件（3.3 的 9 个文件）——这是本 fork 唯一的代价。所有 fork 逻辑都集中在中央开关 + 每处 1 行守卫，重定位成本很低。
+
+### CI 只在 main 上跑
+
+官方所有带 `push` 触发的工作流都限定了 `branches: [main]`（`pull-request.yml`、`codeql.yml`、`nix-build.yml`、`docker-image.yml`、`vercel-merge.yml`），`pull-request.yml` 另外接受 **PR 目标为 main**。所以：
+
+- 直接 `git push` 一个非 main 分支（例如本 fork 的 `lite`）**什么都不跑** —— 这是预期行为，不是配置坏了。
+- 想让 PR checks（web build / 单测 2 个 shard / 扩展测试 / Rust lint / Tauri 测试 / nix flake check）跑起来：在 GitHub 上从该分支开一个 **base = main** 的 PR（同一仓库内的 PR 不需要审批）。
+- PR 里很多 job 用 `dorny/paths-filter` 跳过：`src-tauri/**` 没变就不装 Rust 工具链（改前端时 `rust_lint`、`build_tauri_app` 只报成功不真跑），`apps/readest.koplugin/**` 没变就跳过 Lua 环境。看起来"少跑了一些"是正常的。
+- `schedule` 类工作流（nightly / scorecard / android-e2e 的定时）在 fork 里默认被 GitHub 关掉，不理它。
+- Actions 本身在本 fork 是开着的（`fork-build.yml` 手动跑得起来就是证据），不需要再去点启用。
+
+### 本地 push 时会跑测试（husky）
+
+`git push` 时本地跑的那一串（format:check + lint + test）来自仓库里跟踪的 `.husky/pre-push`，**跟 GitHub Actions 完全无关**：
+
+```
+.husky/pre-push
+  pnpm -C apps/readest-app format:check
+  pnpm -C apps/readest-app lint
+  pnpm -C apps/readest-app test
+```
+
+关键点是 `.git/hooks/` **不会被 clone**，钩子是靠 husky 把 `core.hooksPath` 指到 `.husky/_` 才生效的，而这一步由根 `package.json` 的 `prepare: "husky"` 在 **`pnpm install` 时**执行。所以**新 clone 之后没在仓库根目录跑过 `pnpm install`（或用了 `--ignore-scripts`）就不会有任何钩子**，push 直接就推上去了 —— 换台机器重新 clone 最容易踩到。
+
+自查与修复：
+
+```bash
+git config core.hooksPath      # 有输出（.husky/_）才是装好了；空 = 没装
+pnpm install                   # 在仓库根目录跑，触发 prepare
+pnpm exec husky                # 只想补钩子、不想重装依赖时用这个
+```
+
+跳过一次：`git push --no-verify`，或设 `HUSKY=0`（husky v9 认这个环境变量）。`.husky/_` 自带 `.gitignore`（内容是 `*`），不会污染工作区。

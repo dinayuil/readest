@@ -269,6 +269,37 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src   # 逐处复核
 
 冲突面主要在 UI 组件（3.3 的 9 个文件）——这是本 fork 唯一的代价。所有 fork 逻辑都集中在中央开关 + 每处 1 行守卫，重定位成本很低。
 
+- 合完如果 `.gitmodules` 或子模块指针变了，补一句 `git submodule update --init --recursive`（这仓库有 7 个子模块，包括 `packages/tauri` 这个被 patch 的分支）。
+
+### 合到某个官方发布版（而不是 main）
+
+官方标签都带 `v` 前缀（`v0.12.10`、`v0.12.8`…）。想把 fork 的改动搬到某个发布版上：
+
+```bash
+git fetch upstream --tags               # 拉标签
+git log --oneline -1 v0.12.10           # 确认拿到的是那个提交
+git log --oneline lite..v0.12.10        # 这段区间就是官方新加的提交
+git diff --stat lite..v0.12.10 -- apps/readest-app/src   # 冲突面预览
+git merge v0.12.10                      # 在 lite 上，会生成 "Merge tag 'v0.12.10' into lite"
+```
+
+想要**最新**就用 `upstream/main`（里面可能有还没发版的提交）；想要**确定的发布版**就用标签。合完照旧 `grep -rn ACCOUNTLESS_BUILD apps/readest-app/src` 复核 —— 版本号会被官方那侧带到新版本，fork 构建的产物名也跟着变。
+
+**没报冲突 ≠ 没合上。** merge 安静成功是正常的（本 fork 的改动全在少数几个文件里，官方通常不动它们），判断依据是 `git log --oneline lite..v0.12.10` 为空 + `apps/readest-app/package.json` 的版本号变成新版本。合完别漏掉这两步：
+
+```bash
+git submodule update --init --recursive   # 子模块指针变了，磁盘上那份还是旧的
+pnpm install                             # 根目录跑，顺带把 husky 钩子装好
+```
+
+官方版本会顺带 bump `packages/foliate-js`；merge 只改索引里的指针，**不会**自动更新磁盘上那份。没跑上面第一条就构建，用的是旧 foliate-js，现象会很迷惑。
+
+#### 合并记录
+
+| 时间 | 目标 | 结果 |
+| --- | --- | --- |
+| 2026-09-24 | `v0.12.10`（`8a56831af`） | 无冲突。官方这版改动集中在 `src-tauri`（Android Auto / MediaPlaybackService、备份 zip、native-tts）和新增的 bookshelves / bookorbit 模块；`tauri.conf.json` 未变（fork 的 `tauri.fork.conf.json` 覆盖仍有效），fork 改过的前端文件官方只动了 `services/constants.ts` 3 行。 |
+
 ### CI 只在 main 上跑
 
 官方所有带 `push` 触发的工作流都限定了 `branches: [main]`（`pull-request.yml`、`codeql.yml`、`nix-build.yml`、`docker-image.yml`、`vercel-merge.yml`），`pull-request.yml` 另外接受 **PR 目标为 main**。所以：
@@ -301,3 +332,29 @@ pnpm exec husky                # 只想补钩子、不想重装依赖时用这�
 ```
 
 跳过一次：`git push --no-verify`，或设 `HUSKY=0`（husky v9 认这个环境变量）。`.husky/_` 自带 `.gitignore`（内容是 `*`），不会污染工作区。
+
+### Windows 上 format:check 会被 CRLF 全量打回
+
+装好钩子后第一次 push，很可能卡在 `format:check` 上，报 **两千多个** 错误，且每个文件的 diff 都是"整段重写"。这不是代码格式问题，是**换行符**：
+
+- 仓库 `biome.json` 写死 `"lineEnding": "lf"`。
+- Git for Windows 安装时在**系统级** `C:/Program Files/Git/etc/gitconfig` 里写了 `core.autocrlf = true`（`git config --local` / `--global` 都查不到，得用 `git config --show-origin --get core.autocrlf` 才看得到），于是 checkout 时把仓库里的 LF 全部转成 CRLF。
+- 仓库里存的是 LF → `git ls-files --eol` 显示 `i/lf    w/crlf`。biome 读到 CRLF 就要求改回 LF，**每个文件每一行**都算一处，所以错误数是两千多。
+
+判定与修复（本仓库已做过，换机器重新 clone 时照抄）：
+
+```bash
+git config --show-origin --get core.autocrlf   # 定位到底是哪一层设成了 true
+git ls-files --eol | grep 'w/crlf'             # 看工作区哪些文件是 CRLF
+
+git config core.autocrlf input                 # 仓库级覆盖系统级，只影响本仓库
+biome format --write .                         # 把工作区统一回 LF（等同于 pnpm format）
+git add --renormalize .                        # 刷新索引缓存，见下方注意事项
+```
+
+几个要注意的点：
+
+- `core.autocrlf input` 只在**本仓库**生效（不加 `--global`），不会影响你别的仓库；`input` 比 `false` 好的地方是万一不小心存了 CRLF，提交时也会被转成 LF。
+- `biome format --write .` 之后**不需要提交**：仓库里存的就是 LF，`git diff` 依然是干净的。
+- 转换完一定要跑 `git add --renormalize .`。改过 `core.autocrlf` 之后索引里的 stat 缓存会失效，`git status` 会**假报**两千多个文件被改（此时 `git diff` 是干净的，用它判断才准）。`--renormalize` 只是按新规则重算并刷新缓存，blob 哈希不变，不会真的暂存任何东西。
+- 想让设置随仓库走（换机器也自动生效），可以在仓库根加 `.gitattributes`（`* text=auto eol=lf`）。代价是多一个根文件，官方以后要是也加会冲突，所以目前没采用。

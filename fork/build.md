@@ -26,8 +26,8 @@
 
 - 只对 **`lite` 分支的 push** 生效；手动 `workflow_dispatch` 只留 Artifacts，
   不自动发布（手动构建可能是旧 ref、单平台或 debug 包）。
-- tag：`v<package.json 版本>-fork.<run_number>`，例如
-  `v0.12.20-fork.518`；title 带版本与 build 号。
+- tag：`v<package.json 版本>-lite.<run_number>`，例如
+  `v0.12.20-lite.518`；title 带版本与 build 号。
 - Assets：Windows 的 `setup.exe` + `portable.exe`，Android 的 `.apk`，全部来自
   两个 job 上传的 Artifacts。
 - 重跑同一次 workflow 时 tag 不变，会更新已有 release（`gh release upload

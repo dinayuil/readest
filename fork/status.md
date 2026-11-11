@@ -59,7 +59,7 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
   Windows + Android），保留手动 `workflow_dispatch` 覆盖项；`push` 时
   `inputs.*` 为空，所有架构/ABI/变体都已补默认值（x64 / universal / release）。
 - 新增 `release` job：`lite` 分支 push 且 Windows/Android 两个构建都成功后，
-  把 exe/apk 发布到 GitHub Release；tag 为 `v<版本>-fork.<run_number>`，重跑同一
+  把 exe/apk 发布到 GitHub Release；tag 为 `v<版本>-lite.<run_number>`，重跑同一
   次 workflow 会更新该 release 而不是报错。手动运行只留 Artifacts，不自动发布。
 - 停止每日/每周定时构建：`android-e2e.yml`、`codeql.yml`、`nightly.yml`、
   `nix-update-inputs.yml`、`scorecard.yml` 的 `schedule` 触发已移除；需要时仍可
@@ -94,7 +94,7 @@ library refresh / ABS offline）全部通过。
 
 - [ ] **确认首次 push 触发的 Fork Build**：Windows 与 Android 两个 job 都成功，
       Artifacts 可下载，并自动生成 GitHub Release（tag 形如
-      `v0.12.20-fork.<run_number>`）。Android release 需要的三个 secrets 已在仓库中
+      `v0.12.20-lite.<run_number>`）。Android release 需要的三个 secrets 已在仓库中
       （`ANDROID_KEY_BASE64` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`，
       2026-09-19 配置），且此前手动运行成功过
       （run `35930287767`，2026-09-23），所以 release 版应可直接签名；若这次失败，

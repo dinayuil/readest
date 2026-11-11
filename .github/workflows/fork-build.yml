@@ -412,7 +412,7 @@ jobs:
         run: |
           set -euo pipefail
           version=$(node -p "require('./apps/readest-app/package.json').version")
-          tag="v${version}-fork.${GITHUB_RUN_NUMBER}"
+          tag="v${version}-lite.${GITHUB_RUN_NUMBER}"
           title="Readest Fork ${version} (build ${GITHUB_RUN_NUMBER})"
           notes=$(printf 'Automated Windows + Android build from `%s` (%s).\n\nCommit: https://github.com/%s/commit/%s\nRun: https://github.com/%s/actions/runs/%s\n' \
             "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")

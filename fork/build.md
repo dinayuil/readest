@@ -11,12 +11,30 @@
 - 构建成功后，在 Actions → 该次运行 → Artifacts 下载：
   - `readest-fork-windows-<arch>`
   - `readest-fork-android-<abi>`
+- 如果是 `lite` 分支的 push，且两个 job 都成功，还会自动创建 GitHub Release，
+  见下方“自动发布”。
 
 为什么需要自己的工作流：官方 `release.yml` / `nightly.yml` 的签名与上传步骤依赖
 仓库 secrets（Android keystore、更新签名、R2 凭据），fork 里没有这些，直接跑会在
 最后一步失败；而且 `tauri.conf.json` 开着 `createUpdaterArtifacts: true`，没有签名
 密钥连 Windows 构建都过不去。这个工作流是 fork 新增文件，不参与官方合并，**不需要
 任何 secrets 也能跑 Windows**。
+
+### 自动发布（GitHub Release）
+
+`release` job 在两个构建 job 都成功后运行：
+
+- 只对 **`lite` 分支的 push** 生效；手动 `workflow_dispatch` 只留 Artifacts，
+  不自动发布（手动构建可能是旧 ref、单平台或 debug 包）。
+- tag：`v<package.json 版本>-fork.<run_number>`，例如
+  `v0.12.20-fork.518`；title 带版本与 build 号。
+- Assets：Windows 的 `setup.exe` + `portable.exe`，Android 的 `.apk`，全部来自
+  两个 job 上传的 Artifacts。
+- 重跑同一次 workflow 时 tag 不变，会更新已有 release（`gh release upload
+  --clobber`），不会因 tag 已存在而失败。
+- 使用 GitHub 自动提供的 `GITHUB_TOKEN`（job 级 `contents: write`），不需要额外
+  PAT；由 `GITHUB_TOKEN` 创建的 release 不会反过来触发 `release.yml` 等其它
+  工作流。
 
 ## 2. 手动运行参数
 

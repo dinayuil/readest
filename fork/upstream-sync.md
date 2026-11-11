@@ -125,7 +125,8 @@ git add --renormalize .                        # 刷新索引 stat 缓存
 ## 7. GitHub Actions 与推送
 
 - 本 fork 的日常构建由 `.github/workflows/fork-build.yml` 负责：**每次 push**
-  构建 Windows + Android；同一 ref 的新 push 会取消旧构建。
+  构建 Windows + Android；同一 ref 的新 push 会取消旧构建。`lite` 分支两个构建
+  都成功后会发布 GitHub Release（tag 形如 `v0.12.20-fork.<run_number>`）。
 - 官方工作流里带 `push` 的多数限定 `branches: [main]`，`pull-request.yml` 也只
   接受目标为 `main` 的 PR。推 `lite` 不会触发它们，这是预期行为。
 - 已移除 `android-e2e` / `codeql` / `nightly` / `nix-update-inputs` / `scorecard`

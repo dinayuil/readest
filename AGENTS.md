@@ -40,7 +40,8 @@
    [`fork/upstream-sync.md`](fork/upstream-sync.md) 的流程；冲突时优先官方实现，
    再把 fork 守卫加回去。合并记录追加到 `fork/status.md`。
 5. **构建**：`.github/workflows/fork-build.yml` 在每次 push 后构建 Windows +
-   Android；不要重新启用官方 nightly / release / 定时工作流，除非确有需要。
+   Android；`lite` 分支两个构建都成功后会同时发布 GitHub Release。不要重新启用
+   官方 nightly / release / 定时工作流，除非确有需要。
 
 ## 常用验证
 

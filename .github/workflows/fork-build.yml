@@ -384,3 +384,45 @@ jobs:
           path: apps/readest-app/Readest-fork-*.apk
           if-no-files-found: error
           retention-days: 30
+
+  # Publish the clients as a GitHub Release after both builds succeed. Only
+  # runs for pushes to the shipping branch, so a feature-branch push does not
+  # replace "latest" with an unrelated build. Each run gets its own tag; a
+  # re-run of the same workflow updates that tag instead of failing.
+  release:
+    needs: [windows, android]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/lite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/readest-app/package.json').version")
+          tag="v${version}-fork.${GITHUB_RUN_NUMBER}"
+          title="Readest Fork ${version} (build ${GITHUB_RUN_NUMBER})"
+          notes=$(printf 'Automated Windows + Android build from `%s` (%s).\n\nCommit: https://github.com/%s/commit/%s\nRun: https://github.com/%s/actions/runs/%s\n' \
+            "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" --notes "$notes"
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$title" --notes "$notes"
+          fi
+          gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          echo "released $tag"
+          ls -lh dist

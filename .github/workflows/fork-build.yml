@@ -22,12 +22,15 @@
 # The same config clears `plugins.updater.endpoints`. The base config points them
 # at the OFFICIAL releases, so a client built here would otherwise offer to
 # "update" itself INTO the official build and discard this fork's changes. See
-# apps/readest-app/TODOS.fork.md.
+# fork/status.md.
 #
 # This is a new file, so an upstream merge never conflicts with it.
 name: Fork Build (Windows + Android)
 
 on:
+  # Every push builds the two clients this fork ships. Manual runs keep the
+  # per-run overrides below for a one-off architecture/variant.
+  push:
   workflow_dispatch:
     inputs:
       ref:
@@ -67,17 +70,23 @@ on:
 permissions:
   contents: read
 
+# A newer push supersedes an in-flight build of the same ref; otherwise two
+# ~50-minute runs would race for the same artifacts.
+concurrency:
+  group: fork-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
-    if: inputs.build == 'all' || inputs.build == 'windows'
+    if: github.event_name == 'push' || inputs.build == 'all' || inputs.build == 'windows'
     runs-on: windows-latest
     # The Rust compile dominates and Windows is the slowest desktop target; the
     # first cold run is tens of minutes. rust-cache shortens repeats a lot.
     timeout-minutes: 90
     env:
-      WINDOWS_RUST_TARGET: "${{ inputs.windows_arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}"
+      WINDOWS_RUST_TARGET: "${{ (inputs.windows_arch || 'x64') == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}"
       # NSIS names the installer after the architecture this way: x64 / arm64.
-      WINDOWS_ARCH_LABEL: "${{ inputs.windows_arch == 'arm64' && 'arm64' || 'x64' }}"
+      WINDOWS_ARCH_LABEL: "${{ (inputs.windows_arch || 'x64') == 'arm64' && 'arm64' || 'x64' }}"
       # Set by upstream for the desktop build: the Next export OOMs against the
       # runner's default Node heap.
       NODE_OPTIONS: '--max-old-space-size=8192'
@@ -111,7 +120,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          key: fork-windows-${{ inputs.windows_arch }}-cargo
+          key: fork-windows-${{ inputs.windows_arch || 'x64' }}-cargo
 
       # A partial config file merged over tauri.conf.json, exactly how upstream
       # layers src-tauri/tauri.macos-nonstore.conf.json. A path (rather than an
@@ -194,13 +203,13 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: readest-fork-windows-${{ inputs.windows_arch }}
+          name: readest-fork-windows-${{ inputs.windows_arch || 'x64' }}
           path: apps/readest-app/Readest-fork-*.exe
           if-no-files-found: error
           retention-days: 30
 
   android:
-    if: inputs.build == 'all' || inputs.build == 'android'
+    if: github.event_name == 'push' || inputs.build == 'all' || inputs.build == 'android'
     runs-on: ubuntu-latest
     # Two Rust/NDK link passes upstream measured at ~50 min on a cold cache.
     timeout-minutes: 90
@@ -252,7 +261,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          key: fork-android-${{ inputs.android_abi }}-cargo
+          key: fork-android-${{ inputs.android_abi || 'universal' }}-cargo
 
       # NO .env.local: the committed .env already carries the base64 defaults
       # (Supabase URL/anon key, PostHog, Stripe publishable key) and
@@ -327,10 +336,10 @@ jobs:
         run: |
           set -euo pipefail
           variant=""
-          if [ "${{ inputs.android_variant }}" = "debug" ]; then
+          if [ "${{ inputs.android_variant || 'release' }}" = "debug" ]; then
             variant="--debug"
           fi
-          if [ "${{ inputs.android_abi }}" = "arm64" ]; then
+          if [ "${{ inputs.android_abi || 'universal' }}" = "arm64" ]; then
             # shellcheck disable=SC2086
             pnpm tauri android build --apk $variant -t aarch64
           else
@@ -342,7 +351,7 @@ jobs:
         working-directory: apps/readest-app
         run: |
           set -euo pipefail
-          variant="${{ inputs.android_variant }}"
+          variant="${{ inputs.android_variant || 'release' }}"
           out=src-tauri/gen/android/app/build/outputs/apk
           # `-print -quit` rather than `| head -n 1`: under `pipefail` an early
           # `head` exit hands `find` a SIGPIPE and fails the step.
@@ -365,13 +374,13 @@ jobs:
               ;;
           esac
           version=$(node -p "require('./package.json').version")
-          cp "$apk" "Readest-fork-${version}-${{ inputs.android_abi }}-${variant}.apk"
-          echo "staged $apk -> Readest-fork-${version}-${{ inputs.android_abi }}-${variant}.apk"
+          cp "$apk" "Readest-fork-${version}-${{ inputs.android_abi || 'universal' }}-${variant}.apk"
+          echo "staged $apk -> Readest-fork-${version}-${{ inputs.android_abi || 'universal' }}-${variant}.apk"
           ls -lh Readest-fork-*.apk
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: readest-fork-android-${{ inputs.android_abi }}
+          name: readest-fork-android-${{ inputs.android_abi || 'universal' }}
           path: apps/readest-app/Readest-fork-*.apk
           if-no-files-found: error
           retention-days: 30

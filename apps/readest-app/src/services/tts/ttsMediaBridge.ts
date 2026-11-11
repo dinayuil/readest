@@ -18,7 +18,7 @@ import { isTauriAppPlatform } from '@/services/environment';
 import { getOSPlatform } from '@/utils/misc';
 import { notifyCarPlayState } from './carPlaySession';
 import { SILENCE_DATA } from './TTSData';
-import type { PlaybackSource } from '@/services/playback/playbackSource';
+import { resumePlayback, type PlaybackSource } from '@/services/playback/playbackSource';
 import type { TTSMark, TTSMediaMetadataMode } from './types';
 
 export interface TTSMediaBridgeMeta {
@@ -53,7 +53,11 @@ export const unblockAudio = (): void => {
   // 'playback' via navigator.audioSession) makes WebKit register its own
   // now-playing client — a bare "localhost" card with dead buttons that
   // fights the native session.
-  if (getOSPlatform() === 'ios' && isTauriAppPlatform()) return;
+  //
+  // Desktop Tauri: the plugin drives the OS media controls, so the element
+  // has nothing to host, and on Windows it would register WebView2's own
+  // media session next to the native one.
+  if (isTauriAppPlatform() && getOSPlatform() !== 'android') return;
   if (unblockerAudio) return;
   unblockerAudio = document.createElement('audio');
   unblockerAudio.setAttribute('x-webkit-airplay', 'deny');
@@ -320,7 +324,7 @@ export class TTSMediaBridge {
       if (ctrl.state === 'playing') {
         void ctrl.pause();
       } else if (ctrl.state.includes('paused')) {
-        void ctrl.start();
+        void resumePlayback(ctrl);
       }
     };
     // 'play'/'pause' must be DIRECTIONAL, not toggles: audio-focus events
@@ -331,7 +335,7 @@ export class TTSMediaBridge {
     // action instead.
     mediaSession.setActionHandler('play', () => {
       const ctrl = controller();
-      if (ctrl?.state.includes('paused')) void ctrl.start();
+      if (ctrl?.state.includes('paused')) void resumePlayback(ctrl);
     });
     mediaSession.setActionHandler('pause', () => {
       const ctrl = controller();
@@ -510,7 +514,16 @@ export class TTSMediaBridge {
     if (mediaSession instanceof TauriMediaSession) {
       await mediaSession.updatePlaybackState({ playing: ctrl.state === 'playing' });
     } else {
-      mediaSession.playbackState = ctrl.state === 'playing' ? 'playing' : 'paused';
+      const playing = ctrl.state === 'playing';
+      mediaSession.playbackState = playing ? 'playing' : 'paused';
+      // Chromium treats the session as playing while any media element plays
+      // and won't let playbackState 'paused' override it, so a looping
+      // keep-alive made the play/pause media key send 'pause' forever (#6433).
+      // Pause it with TTS so the key resumes.
+      if (unblockerAudio) {
+        if (playing) void unblockerAudio.play()?.catch(() => {});
+        else unblockerAudio.pause();
+      }
     }
   }
 }

@@ -19,9 +19,17 @@ import { applyBookshelfDraft } from '@/services/bookshelves/state';
 import { HlcGenerator } from '@/libs/crdt';
 
 const save = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const searchParamsRef = vi.hoisted(() => ({ current: new URLSearchParams() }));
+// Mirrors the real router.replace: updates the same searchParamsRef the app
+// reads, so a test can verify a "later reopen" doesn't see cleared params.
+const routerReplaceMock = vi.hoisted(() =>
+  vi.fn((url: string) => {
+    searchParamsRef.current = new URLSearchParams(url.split('?')[1] ?? '');
+  }),
+);
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn(), replace: routerReplaceMock }),
+  useSearchParams: () => searchParamsRef.current,
 }));
 vi.mock('@/utils/nav', () => ({ navigateToLibrary: vi.fn() }));
 vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ envConfig: {} }) }));
@@ -50,16 +58,19 @@ vi.mock('@/components/Dialog', () => ({
   default: ({
     isOpen,
     title,
+    header,
     children,
     onClose,
   }: {
     isOpen: boolean;
     title: string;
+    header?: React.ReactNode;
     children: React.ReactNode;
     onClose: () => void;
   }) =>
     isOpen ? (
       <div role='dialog' aria-label={title}>
+        {header && <div data-testid='dialog-header'>{header}</div>}
         <button type='button' aria-label={`Close ${title}`} onClick={onClose}>
           Close
         </button>
@@ -74,6 +85,8 @@ vi.mock('@/store/absServerStore', () => ({
 
 beforeEach(() => {
   localStorage.removeItem('lastBookshelfTab');
+  searchParamsRef.current = new URLSearchParams();
+  routerReplaceMock.mockClear();
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -83,7 +96,11 @@ beforeEach(() => {
     },
   );
   save.mockReset().mockResolvedValue(undefined);
-  useSettingsStore.setState({ settings: { ...DEFAULT_SYSTEM_SETTINGS, libraryGroupBy: 'none' } });
+  // version: real settings always have one; its absence is what
+  // useEnsureSettingsLoaded (BookshelvesDialog) treats as "not hydrated yet".
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SYSTEM_SETTINGS, version: 1, libraryGroupBy: 'none' },
+  });
   useLibraryStore.setState({
     library: Array.from({ length: 20 }, (_, i) => ({
       hash: `${i}`,
@@ -103,6 +120,20 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 describe('bookshelf editor', () => {
+  it('shows the shelf tabs in the dialog header in place of a title', async () => {
+    render(<BookshelvesDialog />);
+    await act(async () => {
+      await eventDispatcher.dispatch('show-bookshelves');
+    });
+
+    const header = screen.getByTestId('dialog-header');
+    expect(within(header).getByRole('group', { name: 'Bookshelves' })).toBeTruthy();
+    expect(within(header).getByRole('button', { name: 'Default' })).toBeTruthy();
+    expect(within(header).queryByText('Manage Bookshelves')).toBeNull();
+    // The title still names the dialog for assistive technology.
+    expect(screen.getByRole('dialog', { name: 'Manage Bookshelves' })).toBeTruthy();
+  });
+
   it('remembers the selected shelf when the dialog is reopened after a remount', async () => {
     const { unmount } = render(<BookshelvesDialog />);
     await act(async () => {
@@ -121,6 +152,130 @@ describe('bookshelf editor', () => {
       'true',
     );
     expect(save).not.toHaveBeenCalled();
+  });
+  it('waits for settings to hydrate before mounting the editor, so a cold widget deep link still sees custom shelves', async () => {
+    const base = defaultBookshelves(DEFAULT_SYSTEM_SETTINGS);
+    const clock = new HlcGenerator('test');
+    const custom = createBookshelf('My custom shelf');
+    const state = applyBookshelfDraft({ rows: {} }, base, [...base, custom], {
+      userId: '',
+      deviceId: 'test',
+      next: () => clock.next(),
+    }).state;
+
+    // A cold navigation: settings haven't hydrated yet (no `version`), unlike
+    // the normal in-app trigger, which can't fire before the Library page -
+    // and its settings load - already has.
+    useSettingsStore.setState({ settings: {} as SystemSettings });
+    searchParamsRef.current = new URLSearchParams(`editBookshelf=${custom.id}&t=1`);
+    render(<BookshelvesDialog />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'My custom shelf' })).toBeNull();
+
+    // Settings finish hydrating, now including the custom shelf.
+    await act(async () => {
+      useSettingsStore.setState({
+        settings: { ...DEFAULT_SYSTEM_SETTINGS, version: 1, bookshelves: state },
+      });
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'My custom shelf' }).getAttribute('aria-pressed'),
+      ).toBe('true'),
+    );
+  });
+  it('closes immediately when clicked before the editor has mounted (still waiting on settings to hydrate)', async () => {
+    useSettingsStore.setState({ settings: {} as SystemSettings });
+    render(<BookshelvesDialog />);
+    await act(async () => {
+      await eventDispatcher.dispatch('show-bookshelves');
+    });
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Default' })).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Close Manage Bookshelves'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+  it('clears editBookshelf/t on close when the editor never mounted, so a later normal open does not replay it', async () => {
+    useSettingsStore.setState({ settings: {} as SystemSettings }); // not hydrated
+    searchParamsRef.current = new URLSearchParams('editBookshelf=default&t=1');
+    render(<BookshelvesDialog />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('Close Manage Bookshelves'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(searchParamsRef.current.get('editBookshelf')).toBeNull();
+    expect(searchParamsRef.current.get('t')).toBeNull();
+  });
+  it('opens directly to the shelf named by an editBookshelf query param (widget Edit button)', async () => {
+    searchParamsRef.current = new URLSearchParams('editBookshelf=default');
+    render(<BookshelvesDialog />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Default' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+  });
+  it('reselects the requested shelf on a second Edit tap for a different shelf, even while already open', async () => {
+    searchParamsRef.current = new URLSearchParams('editBookshelf=default&t=1');
+    const { rerender } = render(<BookshelvesDialog />);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Default' }).getAttribute('aria-pressed')).toBe(
+        'true',
+      ),
+    );
+
+    searchParamsRef.current = new URLSearchParams('editBookshelf=recent&t=2');
+    rerender(<BookshelvesDialog />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /^Recently read/ }).getAttribute('aria-pressed'),
+      ).toBe('true'),
+    );
+  });
+  it('keeps the current tab when an Edit tap names a shelf deleted in the open editor', async () => {
+    const base = defaultBookshelves(DEFAULT_SYSTEM_SETTINGS);
+    const clock = new HlcGenerator('test');
+    const custom = createBookshelf('My custom shelf');
+    const state = applyBookshelfDraft({ rows: {} }, base, [...base, custom], {
+      userId: '',
+      deviceId: 'test',
+      next: () => clock.next(),
+    }).state;
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SYSTEM_SETTINGS, version: 1, bookshelves: state },
+    });
+    searchParamsRef.current = new URLSearchParams(`editBookshelf=${custom.id}&t=1`);
+    const { rerender } = render(<BookshelvesEditor />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'My custom shelf' }).getAttribute('aria-pressed'),
+      ).toBe('true'),
+    );
+    // Deleted from the draft; the saved settings (base) still have it until the save lands.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Delete bookshelf?' })).getByRole('button', {
+        name: 'Delete',
+      }),
+    );
+    expect(screen.queryByRole('button', { name: 'My custom shelf' })).toBeNull();
+
+    searchParamsRef.current = new URLSearchParams(`editBookshelf=${custom.id}&t=2`);
+    rerender(<BookshelvesEditor />);
+    await waitFor(() => expect(searchParamsRef.current.get('editBookshelf')).toBeNull());
+    expect(document.querySelector('[aria-pressed="true"]')).toBeTruthy();
+  });
+  it('reopens for a repeated Edit tap on the same shelf after being closed', async () => {
+    searchParamsRef.current = new URLSearchParams('editBookshelf=default&t=1');
+    const { rerender } = render(<BookshelvesDialog />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Close Manage Bookshelves'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // Same shelf id as before, but a fresh tap (a new nonce).
+    searchParamsRef.current = new URLSearchParams('editBookshelf=default&t=2');
+    rerender(<BookshelvesDialog />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
   });
   it('falls back to the first shelf when the remembered shelf no longer exists', () => {
     localStorage.setItem('lastBookshelfTab', 'deleted-shelf');
@@ -215,13 +370,33 @@ describe('bookshelf editor', () => {
       unit: undefined,
     });
   });
+  it('suggests filter values only from books still in the library', () => {
+    const [first] = useLibraryStore.getState().library;
+    act(() =>
+      useLibraryStore.setState({
+        library: [
+          { ...first!, hash: 'live', author: 'Live Author' },
+          { ...first!, hash: 'gone', author: 'Removed Author', deletedAt: 1 },
+        ],
+      }),
+    );
+    render(<BookshelvesEditor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookshelf' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add condition' }));
+    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'author' } });
+    const suggested = Array.from(document.querySelectorAll('datalist option'), (o) =>
+      o.getAttribute('value'),
+    );
+    expect(suggested).toEqual(['Live Author']);
+  });
   it('inherits grouping and retains each shelf’s independent choice', async () => {
     render(<BookshelvesEditor />);
     const grouping = screen.getByRole('group', { name: 'Grouping' });
     const inherit = within(grouping).getByLabelText('Use global grouping') as HTMLInputElement;
     const groupBy = within(grouping).getByLabelText('Group by') as HTMLSelectElement;
-    expect(inherit.checked).toBe(true);
-    expect(groupBy.disabled).toBe(true);
+    // The first shelf, Recently read, lists books on its own by default.
+    expect(inherit.checked).toBe(false);
+    expect(groupBy.disabled).toBe(false);
     expect(groupBy.value).toBe('none');
     expect(Array.from(groupBy.options, (option) => option.text)).toEqual([
       'Authors',
@@ -232,7 +407,6 @@ describe('bookshelf editor', () => {
       'Subjects',
       'Status',
     ]);
-    fireEvent.click(inherit);
     fireEvent.change(groupBy, { target: { value: 'author' } });
     fireEvent.click(inherit);
     act(() =>
@@ -611,6 +785,33 @@ describe('bookshelf editor', () => {
     const draft = save.mock.calls.at(-1)![2] as BookshelfDefinition[];
     expect(draft.find((s) => s.name === 'New bookshelf 1')?.hideCovers).toBe(true);
     expect(draft.find((s) => s.id === 'default')?.hideCovers).toBe(false);
+  });
+  it('saves the page count badge for the selected shelf independently (#6909)', async () => {
+    render(<BookshelvesEditor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    fireEvent.click(screen.getByLabelText('Show page count'));
+    await waitFor(() =>
+      expect(
+        save.mock.calls.at(-1)?.[2].find((s: BookshelfDefinition) => s.id === 'default'),
+      ).toMatchObject({
+        showPageCount: true,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Recently read/ }));
+    expect((screen.getByLabelText('Show page count') as HTMLInputElement).checked).toBe(false);
+  });
+  it('drops the page count key when the switch is turned off, so older clients still parse the shelf (#6909)', async () => {
+    render(<BookshelvesEditor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    fireEvent.click(screen.getByLabelText('Show page count'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    fireEvent.click(screen.getByLabelText('Show page count'));
+    await waitFor(() => {
+      const saved = save.mock.calls
+        .at(-1)?.[2]
+        .find((s: BookshelfDefinition) => s.id === 'default');
+      expect(JSON.parse(JSON.stringify(saved))).not.toHaveProperty('showPageCount');
+    });
   });
   it('uses the library language for preview sorting', async () => {
     localStorage.setItem('i18nextLng', 'sv');

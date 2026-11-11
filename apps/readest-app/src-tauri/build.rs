@@ -10,6 +10,13 @@ fn main() {
     if target_os == "windows" {
         build_windows_thumbnail();
     }
+    if target_os == "android" {
+        // The APK ships the library stripped (see gen/android/app/build.gradle.kts),
+        // so Sentry symbolicates Rust panics from the debug files CI uploads. It
+        // matches them to the crashing library by build id, and the NDK linker
+        // emits none by default.
+        println!("cargo:rustc-link-arg=-Wl,--build-id=sha1");
+    }
 
     propagate_sentry_dsn();
     propagate_app_version();
@@ -31,11 +38,14 @@ fn main() {
             "upload_file",
             "get_environment_variable",
             "get_executable_dir",
+            "reveal_item_in_dir",
             "set_webview_info",
             "get_webview_version",
             "is_updater_disabled",
             "allow_paths_in_scopes",
             "optimize_cover_thumbnails",
+            "get_explorer_thumbnails_enabled",
+            "set_explorer_thumbnails_enabled",
             "read_dir",
             "write_backup_zip",
             "extract_backup_zip",
@@ -58,6 +68,7 @@ fn main() {
             "open_web_browser",
             "fetch_web_browser_resource",
             "get_media_proxy_base",
+            "get_media_file_url",
             "set_web_browser_status",
             "extract_web_browser_archive",
             "spawn_fresh_browser",

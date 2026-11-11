@@ -24,10 +24,10 @@ export const useAbsOfflineDownload = () => {
   const offlinePremiumLabel =
     !entitled && (!user || userProfilePlan !== undefined) ? _('Premium') : undefined;
 
-  const handleBookOfflineDownload = useCallback(
-    (book: Book) => {
+  const handleBooksOfflineDownload = useCallback(
+    (books: Book[]) => {
       if (entitled) {
-        transferManager.queueAbsOfflineDownload(book, 1);
+        for (const book of books) transferManager.queueAbsOfflineDownload(book, 1);
         return;
       }
       // FORK (ACCOUNTLESS_BUILD): no upgrade page and no account to route to,
@@ -41,6 +41,10 @@ export const useAbsOfflineDownload = () => {
     },
     [entitled, user, router],
   );
+  const handleBookOfflineDownload = useCallback(
+    (book: Book) => handleBooksOfflineDownload([book]),
+    [handleBooksOfflineDownload],
+  );
 
-  return { handleBookOfflineDownload, offlinePremiumLabel };
+  return { handleBookOfflineDownload, handleBooksOfflineDownload, offlinePremiumLabel };
 };

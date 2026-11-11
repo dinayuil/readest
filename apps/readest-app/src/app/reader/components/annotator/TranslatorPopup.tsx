@@ -3,19 +3,20 @@ import Popup from '@/components/Popup';
 import { Position } from '@/utils/sel';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
+import { useBookDataStore } from '@/store/bookDataStore';
 import { saveViewSettings } from '@/helpers/settings';
 import { useAuth } from '@/context/AuthContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useTranslator } from '@/hooks/useTranslator';
 import { TRANSLATOR_LANGS } from '@/services/constants';
+import { ACCOUNTLESS_BUILD, isCustomTranslatorAllowed } from '@/utils/access';
 import {
   UseTranslatorOptions,
   getTranslatorDisplayLabel,
   getTranslators,
   isTranslatorAvailable,
 } from '@/services/translators';
-import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import Select from '@/components/Select';
 
 const notSupportedLangs = [''];
@@ -73,6 +74,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   // network error), shown under the generic message so a failure can be
   // diagnosed from the popup itself (#5823).
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const book = useBookDataStore((s) => s.getBookData(bookKey)?.book);
   // `selectedProvider` — not the requested `provider` — drives the picker and
   // the credit line: with a persisted `deepl` on an accountless build the two
   // differ, and showing the requested one would render an empty <select> (its
@@ -81,6 +83,9 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
     provider,
     sourceLang,
     targetLang,
+    promptId: getViewSettings(bookKey)?.translationPromptId,
+    bookTitle: book?.title,
+    bookAuthor: book?.author,
   } as UseTranslatorOptions);
 
   const handleSourceLangChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -96,7 +101,11 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
 
   const handleProviderChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const requestedProvider = event.target.value;
-    const availableTranslators = getTranslators().filter((t) => isTranslatorAvailable(t, !!token));
+    const hasPremium = isCustomTranslatorAllowed(token);
+    const availableTranslators = getTranslators()
+      // FORK (ACCOUNTLESS_BUILD): mirrored in the provider effect below.
+      .filter((t) => !ACCOUNTLESS_BUILD || !t.authRequired)
+      .filter((t) => isTranslatorAvailable(t, !!token, hasPremium));
     const selectedTranslator =
       availableTranslators.find((t) => t.name === requestedProvider) || availableTranslators[0]!;
     if (selectedTranslator) {
@@ -107,6 +116,7 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
   };
 
   useEffect(() => {
+    const hasPremium = isCustomTranslatorAllowed(token);
     // FORK (ACCOUNTLESS_BUILD): drop the providers that can only be served from
     // Readest's backend against a signed-in account — mirrors LangPanel so both
     // pickers offer the same set.
@@ -114,12 +124,12 @@ const TranslatorPopup: React.FC<TranslatorPopupProps> = ({
       .filter((t) => !ACCOUNTLESS_BUILD || !t.authRequired)
       .map((t) => ({
         name: t.name,
-        label: getTranslatorDisplayLabel(t, !!token, _),
-        disabled: !!t.disabled,
+        label: getTranslatorDisplayLabel(t, !!token, hasPremium, _),
+        disabled: !!t.disabled || (!!t.premiumRequired && !hasPremium),
       }));
     setProviders(availableProviders);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [translators]);
+  }, [translators, token]);
 
   useEffect(() => {
     setLoading(true);

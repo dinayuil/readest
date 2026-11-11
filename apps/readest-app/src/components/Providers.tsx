@@ -1,14 +1,14 @@
 'use client';
 
 import '@/utils/polyfill';
-import posthog from 'posthog-js';
 import i18n from '@/i18n/i18n';
 import { useEffect, useState } from 'react';
 import { IconContext } from 'react-icons';
 import { AuthProvider } from '@/context/AuthContext';
 import { useEnv } from '@/context/EnvContext';
 import WindowResizeHandles from '@/components/WindowResizeHandles';
-import { CSPostHogProvider } from '@/context/PHContext';
+import WindowOutline from '@/components/WindowOutline';
+import { CSPostHogProvider, initPostHog } from '@/context/PHContext';
 import { SyncProvider } from '@/context/SyncContext';
 import { initSystemThemeListener, loadDataTheme } from '@/store/themeStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -24,9 +24,11 @@ import { getAndroidPatchedViewportContent } from '@/utils/viewport';
 import { ACCOUNTLESS_BUILD } from '@/utils/access';
 import {
   getTelemetryDecision,
+  optInTelemetry,
+  optOutTelemetry,
+  reconcileTelemetryConsent,
   rollIntoTelemetryPromptBucket,
   setTelemetryDecision,
-  TELEMETRY_OPT_OUT_KEY,
 } from '@/utils/telemetry';
 import { getLibraryViewSettings } from '@/helpers/settings';
 import { SETTINGS_FILENAME } from '@/services/constants';
@@ -37,7 +39,6 @@ import { CommandPaletteProvider, CommandPalette } from '@/components/command-pal
 import AtmosphereOverlay from '@/components/AtmosphereOverlay';
 import AppLockScreen from '@/components/AppLockScreen';
 import CarMediaLibraryBridge from '@/components/CarMediaLibraryBridge';
-import FileSyncReport from '@/components/FileSyncReport';
 import AppLockDialog from '@/components/settings/AppLockDialog';
 import PassphrasePrompt from '@/components/PassphrasePrompt';
 import TelemetryConsentDialog from '@/components/TelemetryConsentDialog';
@@ -71,19 +72,27 @@ const finalizeTelemetryDecision = ({
     onShowPrompt();
     return;
   }
-  if (existing !== null) return;
+  if (existing !== null) {
+    // The decision is recorded. PostHog's consent can still drift from the
+    // settings file (a command-palette toggle, another window, or an edited
+    // settings file), so line the two up on every boot (issue #6422).
+    const telemetryEnabled = reconcileTelemetryConsent(settings.telemetryEnabled);
+    if (settings.telemetryEnabled !== telemetryEnabled) {
+      // A recorded opt-out wins over a stale `true` in the file. Save it so
+      // the settings switch shows telemetry as off.
+      settings.telemetryEnabled = telemetryEnabled;
+      void appService.saveSettings(settings);
+    }
+    return;
+  }
 
   if (!isNewUser) {
-    // Existing user: don't change anything they had set. Sync PostHog to
-    // their saved preference and record the decision so we stop checking.
+    // Existing user: keep their saved preference and record the decision so
+    // we stop checking.
     if (settings.telemetryEnabled) {
-      localStorage.setItem(TELEMETRY_OPT_OUT_KEY, 'false');
-      posthog.opt_in_capturing();
-      setTelemetryDecision('opt-in');
+      optInTelemetry();
     } else {
-      localStorage.setItem(TELEMETRY_OPT_OUT_KEY, 'true');
-      posthog.opt_out_capturing();
-      setTelemetryDecision('opt-out');
+      optOutTelemetry();
     }
     return;
   }
@@ -94,9 +103,7 @@ const finalizeTelemetryDecision = ({
     setTelemetryDecision('pending');
     onShowPrompt();
   } else {
-    localStorage.setItem(TELEMETRY_OPT_OUT_KEY, 'true');
-    posthog.opt_out_capturing();
-    setTelemetryDecision('opt-out');
+    optOutTelemetry();
     // Persist the off-by-default to the settings file directly. The settings
     // store isn't seeded yet at this point in boot, so saveSysSettings would
     // write a malformed partial object — write through appService instead.
@@ -144,13 +151,31 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
     loadDataTheme();
     if (appService) {
       initSystemThemeListener(appService);
+      // Windows: the main window is created hidden and only mapped once the
+      // themed page is painted (the shell listens for this event) — see
+      // lib.rs. Other platforms ignore it.
+      import('@tauri-apps/api/event')
+        .then(({ emit }) => {
+          // Emit only after the themed frame has actually been painted
+          // (two rAFs = one full render). Hidden windows never fire rAF,
+          // so race a short fallback timer — beyond it, the page is
+          // painted anyway and emitting immediately is the pre-existing
+          // verified behavior.
+          const painted = new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          });
+          Promise.race([painted, new Promise<void>((r) => setTimeout(r, 100))]).then(() =>
+            emit('window-themed').catch(() => {}),
+          );
+        })
+        .catch(() => {});
       const hadSettingsFilePromise = appService.exists(SETTINGS_FILENAME, 'Settings');
       appService.loadSettings().then(async (settings) => {
         const globalViewSettings = settings.globalViewSettings;
         const hadSettingsFile = await hadSettingsFilePromise.catch(() => false);
         // Fork: telemetry is removed, so the one-time consent decision (and the
         // "prompt 10% of new users" bucket) is skipped entirely. That also keeps
-        // the consent dialog from ever opening.
+        // the consent dialog from ever opening, and PostHog is never started.
         if (!ACCOUNTLESS_BUILD) {
           finalizeTelemetryDecision({
             appService,
@@ -158,6 +183,8 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
             isNewUser: !hadSettingsFile,
             onShowPrompt: () => setShowTelemetryConsent(true),
           });
+          // Consent is final now, so PostHog may start.
+          initPostHog();
         }
         applyUILanguage(globalViewSettings.uiLanguage);
         // Seed the customTextureStore with the disk-loaded textures (preserving
@@ -252,7 +279,6 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
                   <CommandPalette />
                   <AtmosphereOverlay />
                   <PassphrasePrompt />
-                  {!appShellHidden && <FileSyncReport />}
                   <WindowResizeHandles />
                 </div>
                 <AppLockDialog />
@@ -261,6 +287,7 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
                   onClose={() => setShowTelemetryConsent(false)}
                 />
                 {showAppLockScreen && <AppLockScreen />}
+                <WindowOutline />
               </CommandPaletteProvider>
             </DropdownProvider>
           </SyncProvider>

@@ -1,4 +1,4 @@
-import { isTauriAppPlatform } from '@/services/environment';
+import { getInitializedAppService, isTauriAppPlatform } from '@/services/environment';
 import { getOSPlatform } from '@/utils/misc';
 import { invoke } from '@tauri-apps/api/core';
 import { addPluginListener, PluginListener, PermissionState } from '@tauri-apps/api/core';
@@ -40,6 +40,8 @@ export interface MediaSessionState {
   bookTitle?: string;
   bookAuthor?: string;
 }
+
+const DESKTOP_PLATFORMS = ['macos', 'windows', 'linux'];
 
 interface Permissions {
   postNotification: PermissionState;
@@ -240,7 +242,9 @@ export class TauriMediaSession {
       // Best-effort: it must never block or abort the foreground-service start
       // below, so it gets its own catch.
       try {
-        await this.requestPostNotificationPermission();
+        if (!DESKTOP_PLATFORMS.includes(getOSPlatform())) {
+          await this.requestPostNotificationPermission();
+        }
       } catch (error) {
         console.warn('POST_NOTIFICATIONS request failed:', error);
       }
@@ -410,10 +414,19 @@ export function getMediaSession() {
   // native session drives the plugin — mirrored into navigator.mediaSession
   // because WebKit ALSO registers a page client once audioSession type
   // 'playback' is declared (see IOSCompositeMediaSession).
-  if (platform === 'ios' && isTauriAppPlatform()) {
+  // isIOSApp, not the user agent: iPadOS sends a desktop ("Macintosh") one.
+  if (getInitializedAppService()?.isIOSApp) {
     if ('mediaSession' in navigator) {
       return new IOSCompositeMediaSession(navigator.mediaSession);
     }
+    return new TauriMediaSession();
+  }
+  // Desktop: the OS media controls (macOS Now Playing, Windows SMTC, Linux
+  // MPRIS) via the plugin. The webviews can't carry media keys themselves:
+  // WKWebView never becomes the macOS Now Playing app, and WebView2 routes
+  // keys only while a media element plays, reading it as playing even while
+  // TTS is paused (#6433).
+  if (isTauriAppPlatform()) {
     return new TauriMediaSession();
   }
   // Web: navigator.mediaSession, driven by whatever media element plays.

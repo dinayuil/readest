@@ -1,3 +1,4 @@
+import { recordFlow } from '@/services/sync/dataFlow/log';
 import { ABSClient } from '@/services/audiobookshelf/client';
 import { createAbsClient } from '@/services/audiobookshelf/createClient';
 import {
@@ -213,7 +214,7 @@ const downloadAbsCover = async (
       url: client.buildCoverUrl(itemId),
       headers: { Accept: 'image/*' },
       singleThreaded: true,
-      skipSslVerification: true,
+      skipSslVerification: client.allowSelfSignedCert,
     });
     const bytes = (await appService.readFile(tmpPath, 'None', 'binary')) as ArrayBuffer;
     if (!bytes?.byteLength) return false;
@@ -234,6 +235,23 @@ const downloadAbsCover = async (
 };
 
 /**
+ * Download an ABS book's missing cover from its server, unauthenticated, and
+ * set its cover fields in place — only safe on a book not yet in the store.
+ * A no-op (false) for a non-ABS book, one whose server row is absent, or one
+ * whose cover is already on disk.
+ */
+export const fetchAbsBookCover = async (appService: AppService, book: Book): Promise<boolean> => {
+  const parsed = parseAbsFilePath(book.filePath);
+  if (!parsed) return false;
+  const server = findABSServerById(parsed.serverId);
+  if (!server || server.deletedAt) return false;
+  if (await appService.exists(getCoverFilename(book), 'Books')) return false;
+  // Cover downloads never touch token endpoints, so no refresh callback.
+  const client = new ABSClient(server, { onTokensUpdated: () => {} });
+  return downloadAbsCover(appService, client, book, parsed.itemId);
+};
+
+/**
  * Fetch missing covers for ABS books whose server row is present, without
  * requiring authentication — ABS cover endpoints are public. Covers the
  * books-adopted-via-cloud case: a device that received the book rows and the
@@ -243,23 +261,11 @@ const downloadAbsCover = async (
  */
 export const backfillAbsCovers = async (appService: AppService): Promise<void> => {
   const { library } = useLibraryStore.getState();
-  const clients = new Map<string, ABSClient>();
   const replaced = new Map<string, Book>();
   for (const book of library) {
     if (book.deletedAt) continue;
-    const parsed = parseAbsFilePath(book.filePath);
-    if (!parsed) continue;
-    const server = findABSServerById(parsed.serverId);
-    if (!server || server.deletedAt) continue;
-    if (await appService.exists(getCoverFilename(book), 'Books')) continue;
-    let client = clients.get(server.id);
-    if (!client) {
-      // Cover downloads never touch token endpoints, so no refresh callback.
-      client = new ABSClient(server, { onTokensUpdated: () => {} });
-      clients.set(server.id, client);
-    }
     const clone = { ...book };
-    if (await downloadAbsCover(appService, client, clone, parsed.itemId)) {
+    if (await fetchAbsBookCover(appService, clone)) {
       replaced.set(book.hash, clone);
     }
   }
@@ -273,6 +279,8 @@ export const backfillAbsCovers = async (appService: AppService): Promise<void> =
 };
 
 /** Orchestrates: fetch, reconcile, apply to the library store, download missing covers. */
+const LIBRARY_PULL = { connector: 'audiobookshelf', direction: 'pull', kind: 'books' } as const;
+
 export const syncAbsServer = async (appService: AppService, server: ABSServer): Promise<void> => {
   const client = createAbsClient(appService, server);
 
@@ -333,6 +341,8 @@ export const syncAbsServer = async (appService: AppService, server: ABSServer): 
 
   useABSServerStore.getState().updateServer(server.id, { lastSyncedAt: now });
   await useABSServerStore.getState().saveABSServers(toEnvConfig(appService));
+  // These are streaming stubs: only an offline download moves a file.
+  recordFlow({ ...LIBRARY_PULL, count: 0 });
 };
 
 export const syncAllAbsServers = async (appService: AppService): Promise<void> => {
@@ -340,13 +350,17 @@ export const syncAllAbsServers = async (appService: AppService): Promise<void> =
     .getState()
     .getAvailableServers()
     .filter((s) => !s.disabled);
+  const failures: string[] = [];
   for (const server of servers) {
     try {
       await syncAbsServer(appService, server);
     } catch (error) {
       console.error(`[ABS] sync failed for server "${server.name}":`, error);
+      failures.push(error instanceof Error ? error.message : String(error));
     }
   }
+  // Last, so one server's success doesn't hide another's failure.
+  for (const error of failures) recordFlow({ ...LIBRARY_PULL, error });
 };
 
 /** Tombstone all books belonging to a removed server. */

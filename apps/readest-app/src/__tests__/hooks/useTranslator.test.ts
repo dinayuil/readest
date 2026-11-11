@@ -27,8 +27,17 @@ const google = {
   translate: googleTranslate,
 };
 
-vi.mock('@/utils/access', () => ({ ACCOUNTLESS_BUILD: true }));
+vi.mock('@/utils/access', () => ({
+  ACCOUNTLESS_BUILD: true,
+  isCustomTranslatorAllowed: () => false,
+}));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: null, user: null }) }));
+vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ envConfig: {} }) }));
+vi.mock('@/store/customTranslatorStore', () => ({
+  useCustomTranslatorStore: (selector: (state: { translators: unknown[] }) => unknown) =>
+    selector({ translators: [] }),
+  ensureCustomTranslatorsLoaded: vi.fn(),
+}));
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => (key: string) => key }));
 vi.mock('@/utils/misc', () => ({ getLocale: () => 'en', stubTranslation: (key: string) => key }));
 vi.mock('@/services/translators', () => ({

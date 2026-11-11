@@ -20,6 +20,7 @@ vi.mock('@tauri-apps/plugin-process', () => ({
 
 vi.mock('@tauri-apps/plugin-os', () => ({
   type: vi.fn(),
+  version: vi.fn(),
 }));
 
 vi.mock('@/utils/event', () => ({
@@ -28,14 +29,17 @@ vi.mock('@/utils/event', () => ({
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/core';
-import { type as osType } from '@tauri-apps/plugin-os';
+import { type as osType, version as osVersion } from '@tauri-apps/plugin-os';
 import { useTrafficLightStore } from '@/store/trafficLightStore';
 import type { AppService } from '@/types/system';
 import {
+  canToggleFullScreen,
   formatAppWindowTitle,
   tauriHandleOnCloseWindow,
   tauriHandleToggleFullScreen,
   tauriSetWindowTitle,
+  toggleFullScreen,
+  windowNeedsClientOutline,
 } from '@/utils/window';
 
 type CloseHandler = (event: { preventDefault: () => void }) => Promise<void> | void;
@@ -203,6 +207,76 @@ describe('tauriHandleToggleFullScreen', () => {
   });
 });
 
+describe('browser fullscreen', () => {
+  const webApp = { appPlatform: 'web', hasWindow: false } as AppService;
+  const mobileApp = { appPlatform: 'tauri', hasWindow: false } as AppService;
+  const desktopApp = { appPlatform: 'tauri', hasWindow: true } as AppService;
+  const requestFullscreen = vi.fn();
+  const exitFullscreen = vi.fn();
+
+  const stubFullscreen = (enabled: boolean, element: Element | null) => {
+    Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: enabled });
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: element });
+    Object.defineProperty(document, 'exitFullscreen', {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    Object.defineProperty(document.documentElement, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    });
+  };
+
+  beforeEach(() => {
+    requestFullscreen.mockReset().mockResolvedValue(undefined);
+    exitFullscreen.mockReset().mockResolvedValue(undefined);
+    stubFullscreen(true, null);
+  });
+
+  test('is offered in web browsers with the Fullscreen API, where phones have no F11 (#6892)', () => {
+    expect(canToggleFullScreen(webApp)).toBe(true);
+    stubFullscreen(false, null);
+    expect(canToggleFullScreen(webApp)).toBe(false);
+  });
+
+  test('is offered for native windows but not in native mobile webviews', () => {
+    expect(canToggleFullScreen(desktopApp)).toBe(true);
+    expect(canToggleFullScreen(mobileApp)).toBe(false);
+  });
+
+  test('enters browser fullscreen, then exits it', async () => {
+    await toggleFullScreen(webApp);
+    expect(requestFullscreen).toHaveBeenCalledOnce();
+
+    stubFullscreen(true, document.documentElement);
+    await toggleFullScreen(webApp);
+    expect(exitFullscreen).toHaveBeenCalledOnce();
+    expect(requestFullscreen).toHaveBeenCalledOnce();
+  });
+
+  test('swallows a refused fullscreen request', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    requestFullscreen.mockRejectedValue(new Error('denied'));
+
+    await expect(toggleFullScreen(webApp)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('uses the native window in desktop apps', async () => {
+    vi.mocked(osType).mockReturnValue('macos');
+    const win = makeFullscreenWindow({ isFullscreen: false, isMaximized: false });
+    vi.mocked(getCurrentWindow).mockReturnValue(
+      win as unknown as ReturnType<typeof getCurrentWindow>,
+    );
+
+    await toggleFullScreen(desktopApp);
+
+    expect(win.setFullscreen).toHaveBeenCalledWith(true);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+  });
+});
+
 describe('formatAppWindowTitle', () => {
   test('names the open book so windows are distinguishable in Alt+Tab', () => {
     expect(formatAppWindowTitle('The Hobbit')).toBe('Readest - The Hobbit');
@@ -271,5 +345,28 @@ describe('tauriSetWindowTitle', () => {
 
     expect(win.setTitle).toHaveBeenCalledWith('Readest - The Hobbit');
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('windowNeedsClientOutline', () => {
+  const onWindows = { isWindowsApp: true } as AppService;
+  const elsewhere = { isWindowsApp: false } as AppService;
+
+  test('asks for a client outline on Windows 10, whose native frame is asymmetric', () => {
+    vi.mocked(osVersion).mockReturnValue('10.0.19045');
+    expect(windowNeedsClientOutline(onWindows)).toBe(true);
+  });
+
+  test('leaves the native frame alone on Windows 11 and an unreadable build', () => {
+    vi.mocked(osVersion).mockReturnValue('10.0.22631');
+    expect(windowNeedsClientOutline(onWindows)).toBe(false);
+
+    vi.mocked(osVersion).mockReturnValue('10.0');
+    expect(windowNeedsClientOutline(onWindows)).toBe(false);
+  });
+
+  test('never reads the OS version off Windows, where the plugin is unavailable', () => {
+    expect(windowNeedsClientOutline(elsewhere)).toBe(false);
+    expect(osVersion).not.toHaveBeenCalled();
   });
 });

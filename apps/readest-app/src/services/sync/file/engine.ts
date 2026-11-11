@@ -24,6 +24,7 @@ import {
 } from './wire';
 import {
   isRemoteBookClockNewer,
+  isRemoteBookRowNewer,
   isRemoteBookMissingLocally,
   mergeBookConfig,
   mergeBookMetadata,
@@ -33,9 +34,22 @@ import {
 
 export type SyncStrategy = 'silent' | 'send' | 'receive';
 
+const noteStamp = ({ id, updatedAt, deletedAt }: BookNote) =>
+  `${id}:${updatedAt}:${deletedAt ?? 0}`;
+
+/** Whether a merge changed what this device has, not just read the remote. */
+const configChanged = (local: BookConfig, merged: BookConfig, notes: BookNote[]) => {
+  if (merged.location !== local.location) return true;
+  if (merged.progress?.[0] !== local.progress?.[0]) return true;
+  const known = new Set((local.booknotes ?? []).map(noteStamp));
+  return notes.length !== known.size || notes.some((note) => !known.has(noteStamp(note)));
+};
+
 export interface PullResult {
   /** True when the remote had a config and we merged something into local. */
   applied: boolean;
+  /** True when the merge moved the reading position or changed a note. */
+  changed?: boolean;
   /** The merged config to be written back into the local store. */
   mergedConfig?: BookConfig;
   /** When non-empty, these are the notes after merge — use them to update the live view. */
@@ -253,11 +267,10 @@ export class FileSyncEngine {
    * instance's sync session. The engine passes the FULL ancestor chain
    * (`/Readest`, `/Readest/books`, `/Readest/books/<hash>`) to `ensureDir` for
    * every book, so without this cache the shared parents get re-created on each
-   * book — a redundant round-trip, and a 409 "name already exists" flood on
-   * providers that create folders explicitly (OneDrive) or re-MKCOL (WebDAV).
-   * S3's `ensureDir` no-ops and Drive caches path->id internally, so both are
-   * unaffected. The engine is built per sync session, so the cache lifetime is
-   * one run.
+   * book — a redundant round-trip, and a 405 flood on WebDAV's re-MKCOL.
+   * S3's and OneDrive's `ensureDir` no-op and Drive caches path->id
+   * internally, so those are unaffected. The engine is built per sync session,
+   * so the cache lifetime is one run.
    */
   private readonly ensuredDirs = new Set<string>();
   /**
@@ -305,6 +318,7 @@ export class FileSyncEngine {
     const { config, notes } = mergeBookConfig(localConfig, remote);
     return {
       applied: true,
+      changed: configChanged(localConfig, config, notes),
       mergedConfig: config,
       mergedNotes: notes,
       remoteDeviceId: remote.writerDeviceId,
@@ -664,7 +678,9 @@ export class FileSyncEngine {
     const isLocalNewer = (book: Book): boolean => {
       const remote = remoteByHash.get(book.hash);
       if (!remote) return true;
-      return (book.updatedAt ?? 0) > (remote.updatedAt ?? 0);
+      // Arguments swapped on purpose: "local newer on any clock". A metadata /
+      // cover edit leaves updatedAt alone (#6414), and its cover still has to go.
+      return isRemoteBookClockNewer(remote, book);
     };
 
     // File-upload cursor (#4856): the index records which book FILES already
@@ -802,7 +818,7 @@ export class FileSyncEngine {
               const pull = await this.pullBookConfig(merged, localConfig);
               if (pull.applied && pull.mergedConfig) {
                 await this.store.saveBookConfig(merged, pull.mergedConfig);
-                result.configsDownloaded += 1;
+                if (pull.changed) result.configsDownloaded += 1;
               }
             } catch (e) {
               noteAbort(e);
@@ -1100,7 +1116,7 @@ export class FileSyncEngine {
               const pullResult = await this.pullBookConfig(rb, emptyLocal);
               if (pullResult.applied && pullResult.mergedConfig) {
                 await this.store.saveBookConfig(rb, pullResult.mergedConfig);
-                result.configsDownloaded += 1;
+                if (pullResult.changed) result.configsDownloaded += 1;
               }
             } catch (e) {
               console.warn('file sync: config download failed', rb.hash, e);
@@ -1341,7 +1357,9 @@ export class FileSyncEngine {
           if (!!r.deletedAt !== !!b.deletedAt) return true;
           if ((r.fileSyncDeletionRequestedAt ?? 0) !== (b.fileSyncDeletionRequestedAt ?? 0))
             return true;
-          return (b.updatedAt ?? 0) > (r.updatedAt ?? 0);
+          // Local row newer on any clock — a group-only edit leaves updatedAt
+          // alone (#6414) but still has to reach library.json.
+          return isRemoteBookRowNewer(r, b);
         });
 
       if (indexDirty) {

@@ -717,6 +717,11 @@ rounded-window page frame (`.window-border`, `z-99` in `globals.css`), then laye
 | `120` | Modal / command palette | `ModalPortal`, `CommandPalette` |
 | `130` | Toast / alert | `Alert` |
 | `200` | Security lock screen | `AppLockScreen` |
+| `210` | Windows 10 client-area window frame | `.window-outline`, `globals.css` |
+
+`210` is the one layer above the overlays rather than between them: it stands in for the
+OS's non-client window edge, which no page content ever covered, so it has to survive the
+lock screen covering the window.
 
 The non-obvious invariant: **`ModalPortal` (120) must stay above `SettingsDialog`
 (110)** so a modal opened _from inside_ Settings (e.g. Add OPDS Catalog) isn't buried.
@@ -842,6 +847,17 @@ Verification checklist before shipping a new UI:
 Readest ships on **macOS, Windows, Linux, iOS, Android, web**. Adwaita is desktop-GNOME-
 native; we adapt where the host OS has strong conventions, but never at the cost of
 identity.
+
+#### Placeholder book covers
+
+Books without usable cover art use the Classic placeholder: a solid muted color,
+thin spine rule, centered serif title, and a small format label and author in the
+grid. Compact list thumbnails show the title alone. Colors come from a fixed
+palette keyed by the book's file hash, so sorting, metadata edits, syncing and
+theme changes do not change the color. These colors are cover art, rather than
+UI surface or brand colors; cream text has at least 4.5:1 contrast on every color.
+E-ink replaces the color with theme paper and ink, opaque rules and a 1px border.
+The explicit Hide Covers setting retains its neutral title panels.
 
 #### iOS
 

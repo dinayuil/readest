@@ -7,6 +7,7 @@ vi.mock('@/utils/misc', () => ({
 }));
 vi.mock('@/services/environment', () => ({
   isTauriAppPlatform: vi.fn(),
+  getInitializedAppService: vi.fn(),
 }));
 
 // mediaSession.ts imports these at module load; TauriMediaSession construction
@@ -24,7 +25,10 @@ import {
   type MediaSessionState,
 } from '@/libs/mediaSession';
 import { getOSPlatform } from '@/utils/misc';
-import { isTauriAppPlatform } from '@/services/environment';
+import { getInitializedAppService, isTauriAppPlatform } from '@/services/environment';
+import type { AppService } from '@/types/system';
+
+const iosApp = { isIOSApp: true } as AppService;
 
 const setNavigatorMediaSession = (present: boolean) => {
   if (present) {
@@ -40,6 +44,7 @@ const setNavigatorMediaSession = (present: boolean) => {
 describe('getMediaSession', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getInitializedAppService).mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -54,6 +59,17 @@ describe('getMediaSession', () => {
     // dead buttons. The composite feeds both.
     vi.mocked(getOSPlatform).mockReturnValue('ios');
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(getInitializedAppService).mockReturnValue(iosApp);
+    setNavigatorMediaSession(true);
+
+    expect(getMediaSession()).toBeInstanceOf(IOSCompositeMediaSession);
+  });
+
+  // iPadOS sends a desktop user agent, so the OS reads as macOS there (#6974).
+  test('returns the composite session on an iPad in the iOS app', () => {
+    vi.mocked(getOSPlatform).mockReturnValue('macos');
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(getInitializedAppService).mockReturnValue(iosApp);
     setNavigatorMediaSession(true);
 
     expect(getMediaSession()).toBeInstanceOf(IOSCompositeMediaSession);
@@ -62,6 +78,7 @@ describe('getMediaSession', () => {
   test('returns the plain TauriMediaSession on iOS Tauri without navigator.mediaSession', () => {
     vi.mocked(getOSPlatform).mockReturnValue('ios');
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(getInitializedAppService).mockReturnValue(iosApp);
     setNavigatorMediaSession(false);
 
     const session = getMediaSession();
@@ -89,6 +106,20 @@ describe('getMediaSession', () => {
     expect(getMediaSession()).toBeInstanceOf(TauriMediaSession);
   });
 
+  // Desktop webviews can't be trusted with media keys: WKWebView never becomes
+  // the macOS Now Playing app, and WebView2's routing hinges on a playing
+  // media element (#6433). The plugin drives the OS media controls instead.
+  test.each([
+    'macos',
+    'windows',
+    'linux',
+  ])('returns TauriMediaSession on %s Tauri (native OS media controls)', (platform) => {
+    vi.mocked(getOSPlatform).mockReturnValue(platform as ReturnType<typeof getOSPlatform>);
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    setNavigatorMediaSession(true);
+    expect(getMediaSession()).toBeInstanceOf(TauriMediaSession);
+  });
+
   test('falls back to navigator.mediaSession on the web', () => {
     vi.mocked(getOSPlatform).mockReturnValue('macos');
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
@@ -111,6 +142,7 @@ describe('getMediaSession', () => {
 describe('TauriMediaSession.setActive', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getOSPlatform).mockReturnValue('android');
   });
 
   test('registers transport listeners before notification permission settles', async () => {
@@ -135,6 +167,20 @@ describe('TauriMediaSession.setActive', () => {
     expect(addPluginListener).toHaveBeenCalled();
     releasePermission();
     await activation;
+  });
+
+  test('skips the notification permission on desktop', async () => {
+    vi.mocked(getOSPlatform).mockReturnValue('macos');
+    vi.mocked(invoke).mockResolvedValue(undefined);
+
+    const session = new TauriMediaSession();
+    await session.setActive({ active: true });
+
+    expect(invoke).toHaveBeenCalledWith(
+      'plugin:native-tts|set_media_session_active',
+      expect.anything(),
+    );
+    expect(invoke).not.toHaveBeenCalledWith('plugin:native-tts|checkPermissions');
   });
 
   test('requests POST_NOTIFICATIONS whenever the session activates', async () => {

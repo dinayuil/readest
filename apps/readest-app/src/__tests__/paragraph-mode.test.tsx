@@ -12,6 +12,7 @@ import ParagraphOverlay from '@/app/reader/components/paragraph/ParagraphOverlay
 import { useParagraphMode } from '@/app/reader/hooks/useParagraphMode';
 import type { FoliateView } from '@/types/view';
 import { eventDispatcher } from '@/utils/event';
+import { ParagraphIterator } from '@/utils/paragraph';
 import {
   getParagraphActionForKey,
   getParagraphActionForZone,
@@ -110,6 +111,8 @@ function createMockView(docs: Document[], initialPrimaryIndex: number) {
 
   const renderer = {
     primaryIndex: initialPrimaryIndex,
+    atStart: false,
+    atEnd: false,
     getContents: vi.fn(() => contents),
     nextSection: vi.fn(async () => {
       renderer.primaryIndex = Math.min(renderer.primaryIndex + 1, contents.length - 1);
@@ -239,6 +242,170 @@ describe('paragraph mode', () => {
     await waitFor(() => {
       expect(renderer.goTo).toHaveBeenLastCalledWith(expect.objectContaining({ index: 1 }));
     });
+  });
+
+  it.each([
+    'next',
+    'prev',
+  ] as const)('preserves repeated %s paragraph events during a section transition', async (direction) => {
+    const firstDoc = createDoc('<p>First A</p><p>First B</p>');
+    const secondDoc = createDoc('<p>Second A</p><p>Second B</p>');
+    const { view, renderer } = createMockView([firstDoc, secondDoc], direction === 'next' ? 0 : 1);
+    let finishTransition: (() => void) | undefined;
+    const transition = direction === 'next' ? renderer.nextSection : renderer.prevSection;
+    transition.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTransition = () => {
+            renderer.primaryIndex = direction === 'next' ? 1 : 0;
+            resolve();
+          };
+        }),
+    );
+    const viewRef = { current: view } as React.RefObject<FoliateView | null>;
+    render(<HookHarness view={viewRef} />);
+    await waitFor(() => expect(hookApi?.paragraphState.currentRange).toBeTruthy());
+    if (direction === 'next') {
+      await act(async () => {
+        await hookApi?.goToNextParagraph();
+      });
+    }
+
+    let firstPress = Promise.resolve();
+    let secondPress = Promise.resolve();
+    await act(async () => {
+      firstPress = eventDispatcher.dispatch(`paragraph-${direction}`, { bookKey: 'book-1' });
+    });
+    await waitFor(() => expect(transition).toHaveBeenCalledOnce());
+    await act(async () => {
+      secondPress = eventDispatcher.dispatch(`paragraph-${direction}`, { bookKey: 'book-1' });
+      finishTransition!();
+      await Promise.all([firstPress, secondPress]);
+    });
+    await waitFor(() => {
+      expect(hookApi?.paragraphState.currentRange?.toString()).toBe(
+        direction === 'next' ? 'Second B' : 'First A',
+      );
+    });
+    expect(transition).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    'next',
+    'prev',
+  ] as const)('does not wait on repeated %s book-boundary events before reversing', async (direction) => {
+    const timers = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation((handler, timeout) =>
+        realSetTimeout(handler, typeof timeout === 'number' && timeout < 1000 ? 0 : timeout),
+      );
+    const doc = createDoc('<p>First</p><p>Last</p>');
+    const { view, renderer } = createMockView([doc], 0);
+    renderer.atStart = true;
+    renderer.atEnd = true;
+    render(<HookHarness view={{ current: view }} />);
+    await waitFor(() => expect(hookApi?.paragraphState.currentRange).toBeTruthy());
+    if (direction === 'next') {
+      await act(async () => {
+        await hookApi?.goToNextParagraph();
+      });
+    }
+    timers.mockClear();
+    await act(async () => {
+      await Promise.all([
+        eventDispatcher.dispatch(`paragraph-${direction}`, { bookKey: 'book-1' }),
+        eventDispatcher.dispatch(`paragraph-${direction}`, { bookKey: 'book-1' }),
+        eventDispatcher.dispatch(direction === 'next' ? 'paragraph-prev' : 'paragraph-next', {
+          bookKey: 'book-1',
+        }),
+      ]);
+    });
+    expect(hookApi?.paragraphState.currentRange?.toString()).toBe(
+      direction === 'next' ? 'First' : 'Last',
+    );
+    expect(timers).not.toHaveBeenCalledWith(expect.any(Function), 750);
+  });
+
+  it.each([
+    'next',
+    'prev',
+  ] as const)('waits for an existing page turn when the %s section move returns early', async (direction) => {
+    const firstDoc = createDoc('<p>First A</p><p>First B</p>');
+    const secondDoc = createDoc('<p>Second A</p><p>Second B</p>');
+    const { view, renderer } = createMockView([firstDoc, secondDoc], direction === 'next' ? 0 : 1);
+    const transition = direction === 'next' ? renderer.nextSection : renderer.prevSection;
+    transition.mockImplementation(async () => {
+      setTimeout(() => {
+        renderer.primaryIndex = direction === 'next' ? 1 : 0;
+      }, 0);
+    });
+    render(<HookHarness view={{ current: view }} />);
+    await waitFor(() => expect(hookApi?.paragraphState.currentRange).toBeTruthy());
+    if (direction === 'next') {
+      await act(async () => {
+        await hookApi?.goToNextParagraph();
+      });
+    }
+    await act(async () => {
+      await eventDispatcher.dispatch(`paragraph-${direction}`, { bookKey: 'book-1' });
+    });
+    expect(hookApi?.paragraphState.currentRange?.toString()).toBe(
+      direction === 'next' ? 'Second A' : 'First B',
+    );
+  });
+
+  it('reports a failed paragraph event and still runs the next event', async () => {
+    const doc = createDoc('<p>First</p><p>Second</p><p>Third</p>');
+    const { view } = createMockView([doc], 0);
+    render(<HookHarness view={{ current: view }} />);
+    await waitFor(() => expect(hookApi?.paragraphState.currentRange?.toString()).toBe('First'));
+    const failure = new Error('Paragraph move failed');
+    vi.spyOn(ParagraphIterator.prototype, 'next').mockImplementationOnce(() => {
+      throw failure;
+    });
+    await act(async () => {
+      await expect(eventDispatcher.dispatch('paragraph-next', { bookKey: 'book-1' })).rejects.toBe(
+        failure,
+      );
+    });
+    await act(async () => {
+      await eventDispatcher.dispatch('paragraph-next', { bookKey: 'book-1' });
+    });
+    expect(hookApi?.paragraphState.currentRange?.toString()).toBe('Second');
+  });
+
+  it('moves across the chunks of a section rendered in chunks', async () => {
+    // foliate-js renders a huge section as chunk documents that share its
+    // spine index; each holds hidden placeholders for the other chunks.
+    const firstChunk = createDoc('<p>End of chunk one</p><p data-foliate-chunk="1"></p>');
+    const secondChunk = createDoc(
+      '<p data-foliate-chunk="0"></p><p>Start of chunk two</p><p>More of chunk two</p>',
+    );
+    const chunks = [firstChunk, secondChunk];
+    let primary = 0;
+    const { view, renderer } = createMockView(chunks, 0);
+    renderer.getContents.mockImplementation(() => [
+      { doc: chunks[primary]!, index: 0 },
+      { doc: chunks[1 - primary]!, index: 0 },
+    ]);
+    renderer.nextSection.mockImplementation(async () => {
+      primary = 1;
+    });
+    const viewRef = { current: view } as React.RefObject<FoliateView | null>;
+
+    render(<HookHarness view={viewRef} />);
+    await waitFor(() => {
+      expect(hookApi?.paragraphState.currentRange?.toString()).toContain('End of chunk one');
+    });
+
+    await act(async () => {
+      await hookApi?.goToNextParagraph();
+    });
+
+    await waitFor(() => {
+      expect(hookApi?.paragraphState.currentRange?.toString()).toContain('Start of chunk two');
+    });
+    expect(renderer.nextSection).toHaveBeenCalledTimes(1);
   });
 
   it('resumes without scrolling the underlying view so repeated enter/exit cannot rewind (#4717)', async () => {
@@ -1168,13 +1335,34 @@ describe('paragraph mode selection (#6200)', () => {
     return range;
   };
 
-  const renderOverlayWithSource = async (onClose = vi.fn()) => {
-    const doc = createDoc('<p>Hello <em>brave</em> new world</p><h2>Next</h2>');
+  const renderOverlayWithSource = async (
+    onClose = vi.fn(),
+    html = '<p>Hello <em>brave</em> new world</p><h2>Next</h2>',
+  ) => {
+    const doc = createDoc(html);
     const range = createSourceRange(doc);
-    mockGetView.mockReturnValue({
+    const view = Object.assign(new EventTarget(), {
       renderer: { getContents: () => [{ doc, index: 3 }] },
       getCFI: mockGetCFI,
+      book: {
+        sections: [
+          {},
+          {},
+          {},
+          {
+            resolveHref: (href: string) => {
+              if (/^https?:/.test(href)) return href;
+              const url = new URL(href, 'https://book/OEBPS/Text/ch1.xhtml');
+              return url.pathname.slice(1) + url.hash;
+            },
+          },
+        ],
+        isExternal: (href: string) => /^https?:/.test(href),
+      },
+      resolveNavigation: vi.fn<() => { index: number } | undefined>(() => ({ index: 4 })),
+      goTo: vi.fn(),
     });
+    mockGetView.mockReturnValue(view);
     mockGetProgress.mockReturnValue({ sectionHref: 'ch1.xhtml' });
 
     const { container, rerender } = render(
@@ -1199,7 +1387,7 @@ describe('paragraph mode selection (#6200)', () => {
     const dialog = container.querySelector('[role="dialog"]') as HTMLDivElement;
     const contentArea = container.querySelector('.relative.flex') as HTMLDivElement;
     vi.spyOn(contentArea, 'getBoundingClientRect').mockReturnValue(contentRect);
-    return { container, rerender, dialog, contentArea, clone, doc, range, onClose };
+    return { container, rerender, dialog, contentArea, clone, doc, range, onClose, view };
   };
 
   // Select `text` (within one text node) in the clone, as the user would.
@@ -1224,6 +1412,102 @@ describe('paragraph mode selection (#6200)', () => {
 
   const selectionReports = (spy: { mock: { calls: unknown[][] } }) =>
     spy.mock.calls.filter(([name]) => name === 'footnote-selection');
+
+  it.each([
+    ['../Notes/notes.xhtml#note1', 'OEBPS/Notes/notes.xhtml#note1'],
+    ['#note1', 'OEBPS/Text/ch1.xhtml#note1'],
+  ])('routes a cloned footnote %s through the reader without navigating the app (#6359)', async (href, resolved) => {
+    const dispatchSpy = vi.spyOn(eventDispatcher, 'dispatch');
+    const { clone, view, onClose } = await renderOverlayWithSource(
+      vi.fn(),
+      '<p>Text <a epub:type="noteref" href="' + href + '"><sup>1</sup></a></p><h2>Next</h2>',
+    );
+    const onLink = vi.fn((event: Event) => event.preventDefault());
+    view.addEventListener('link', onLink);
+    dispatchSpy.mockClear();
+
+    expect(fireEvent.click(clone.querySelector('sup')!)).toBe(false);
+
+    expect(onLink).toHaveBeenCalledTimes(1);
+    const event = onLink.mock.calls[0]![0] as CustomEvent;
+    expect(event.detail).toEqual({ a: clone.querySelector('a'), href: resolved });
+    expect(event.cancelable).toBe(true);
+    expect(view.goTo).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dispatchSpy).not.toHaveBeenCalledWith('paragraph-prev', expect.anything());
+    expect(dispatchSpy).not.toHaveBeenCalledWith('paragraph-next', expect.anything());
+  });
+
+  it('leaves paragraph mode for an ordinary in-book link the popup does not consume', async () => {
+    const { clone, view, onClose } = await renderOverlayWithSource(
+      vi.fn(),
+      '<p><a href="../Text/ch2.xhtml">Next chapter</a></p><h2>Next</h2>',
+    );
+
+    expect(fireEvent.click(clone.querySelector('a')!)).toBe(false);
+
+    expect(view.goTo).toHaveBeenCalledWith('OEBPS/Text/ch2.xhtml');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a fragment against the source section when its filename is outdated', async () => {
+    const { clone, view } = await renderOverlayWithSource(
+      vi.fn(),
+      '<p><a href="old.xhtml#note1">Note</a></p><h2>Next</h2>',
+    );
+    view.resolveNavigation.mockReturnValue(undefined);
+    const onLink = vi.fn((event: Event) => event.preventDefault());
+    view.addEventListener('link', onLink);
+
+    expect(fireEvent.click(clone.querySelector('a')!)).toBe(false);
+
+    expect((onLink.mock.calls[0]![0] as CustomEvent).detail.href).toBe(
+      'OEBPS/Text/ch1.xhtml#note1',
+    );
+    expect(view.goTo).not.toHaveBeenCalled();
+  });
+
+  it('hands external paragraph links to the existing confirmation', async () => {
+    const { clone, view, onClose } = await renderOverlayWithSource(
+      vi.fn(),
+      '<p><a href="https://example.com/">Website</a></p><h2>Next</h2>',
+    );
+    const onExternalLink = vi.fn((event: Event) => event.preventDefault());
+    view.addEventListener('external-link', onExternalLink);
+
+    expect(fireEvent.click(clone.querySelector('a')!)).toBe(false);
+
+    expect(onExternalLink).toHaveBeenCalledTimes(1);
+    expect((onExternalLink.mock.calls[0]![0] as CustomEvent).detail.href).toBe(
+      'https://example.com/',
+    );
+    expect(view.goTo).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('prevents native link navigation when a selection gesture or popup consumes the click', async () => {
+    const { clone, view } = await renderOverlayWithSource(
+      vi.fn(),
+      '<p><a href="#note1">Select this text</a></p><h2>Next</h2>',
+    );
+    const onLink = vi.fn();
+    view.addEventListener('link', onLink);
+    selectInClone(clone, 'Select');
+
+    expect(fireEvent.click(clone.querySelector('a')!)).toBe(false);
+    expect(onLink).not.toHaveBeenCalled();
+
+    document.getSelection()!.removeAllRanges();
+    const consume = () => true;
+    eventDispatcher.onSync('iframe-single-click', consume);
+    try {
+      expect(fireEvent.click(clone.querySelector('a')!)).toBe(false);
+      expect(onLink).not.toHaveBeenCalled();
+      expect(view.goTo).not.toHaveBeenCalled();
+    } finally {
+      eventDispatcher.offSync('iframe-single-click', consume);
+    }
+  });
 
   it('reports a settled selection in the clone with the CFI of that text in the book', async () => {
     const dispatchSpy = vi.spyOn(eventDispatcher, 'dispatch');

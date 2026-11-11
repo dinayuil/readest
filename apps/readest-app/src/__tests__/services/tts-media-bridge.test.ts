@@ -9,7 +9,7 @@ vi.mock('@/services/tts/carPlaySession', () => ({
   notifyCarPlayState: (...a: unknown[]) => notifyCarPlayMock(...a),
 }));
 
-import { TTSMediaBridge } from '@/services/tts/ttsMediaBridge';
+import { TTSMediaBridge, releaseUnblockAudio, unblockAudio } from '@/services/tts/ttsMediaBridge';
 import { fetchImageAsBase64 } from '@/utils/image';
 import { TauriMediaSession, type MediaSessionState } from '@/libs/mediaSession';
 import type { TTSController } from '@/services/tts/TTSController';
@@ -20,6 +20,7 @@ class FakeController extends EventTarget {
   terminated = false;
   pause = vi.fn().mockResolvedValue(true);
   start = vi.fn().mockResolvedValue(undefined);
+  resume = vi.fn().mockResolvedValue(undefined);
   forward = vi.fn().mockResolvedValue(undefined);
   backward = vi.fn().mockResolvedValue(undefined);
   seekToTime = vi.fn().mockResolvedValue(undefined);
@@ -99,7 +100,7 @@ describe('TTSMediaBridge', () => {
     expect(fake.handlers.has('play')).toBe(true);
     fake.handlers.get('pause')!({} as MediaSessionActionDetails);
     expect(controller.pause).toHaveBeenCalled();
-    controller.state = 'paused';
+    controller.state = 'stop-paused';
     fake.handlers.get('play')!({} as MediaSessionActionDetails);
     expect(controller.start).toHaveBeenCalled();
     fake.handlers.get('seekto')!({ seekTime: 42 } as MediaSessionActionDetails);
@@ -146,8 +147,45 @@ describe('TTSMediaBridge', () => {
     controller.state = 'playing';
     toggle();
     expect(controller.pause).toHaveBeenCalled();
-    controller.state = 'paused';
+    controller.state = 'forward-paused';
     toggle();
+    expect(controller.start).toHaveBeenCalled();
+  });
+
+  // #7048: a media key after a mid-sentence pause re-read the sentence from
+  // its start, while Space continued in place. An exact 'paused' resumes the
+  // audio where it stopped, like the in-app play button; the other paused
+  // flavours (stop/forward/setrate/...) still need a full start().
+  test('play and toggle resume a mid-sentence pause in place', async () => {
+    class RecordingTauriSession extends TauriMediaSession {
+      actions = new Map<string, (() => void) | ((position: number) => void)>();
+      override setActionHandler(
+        action: string,
+        handler: (() => void) | ((position: number) => void) | null,
+      ) {
+        if (handler) this.actions.set(action, handler);
+        else this.actions.delete(action);
+      }
+      override async setActive() {}
+      override async updateMetadata() {}
+      override async updatePlaybackState() {}
+    }
+    const tauriSession = new RecordingTauriSession();
+    bridge = new TTSMediaBridge(() => tauriSession as unknown as MediaSession);
+    await bridge.bind(controller as unknown as TTSController, meta());
+    controller.state = 'paused';
+    (tauriSession.actions.get('toggle') as () => void)();
+    (tauriSession.actions.get('play') as () => void)();
+    expect(controller.resume).toHaveBeenCalledTimes(2);
+    expect(controller.start).not.toHaveBeenCalled();
+  });
+
+  test('play restarts a source that has no resume()', async () => {
+    const audiobookLike = controller as Partial<FakeController>;
+    delete audiobookLike.resume;
+    await bind();
+    controller.state = 'paused';
+    fake.handlers.get('play')!({} as MediaSessionActionDetails);
     expect(controller.start).toHaveBeenCalled();
   });
 
@@ -210,6 +248,28 @@ describe('TTSMediaBridge', () => {
     controller.emitState('playing');
     await new Promise((r) => setTimeout(r, 0));
     expect(fake.playbackState).toBe('playing');
+  });
+
+  // #6433: Chromium reports the session as playing while ANY media element
+  // plays, ignoring playbackState 'paused'. With the looping keep-alive still
+  // running after a pause, the hardware play/pause key kept sending 'pause'
+  // and TTS could never be resumed from the keyboard.
+  test('pauses the keep-alive element while paused so media keys can resume', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    unblockAudio();
+    play.mockClear();
+    await bind();
+    controller.emitState('paused');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(pause).toHaveBeenCalledTimes(1);
+    controller.emitState('stopped'); // transit: paragraph advance
+    controller.emitState('playing');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(play).toHaveBeenCalledTimes(1);
+    releaseUnblockAudio();
+    play.mockRestore();
+    pause.mockRestore();
   });
 
   // Every paragraph advance transits 'playing' -> 'stopped' -> 'playing'. A

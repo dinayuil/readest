@@ -31,6 +31,7 @@ interface HighlightOptionsProps {
   globalToggleActive?: boolean;
   onToggleGlobal?: () => void;
   onHandleHighlight: (update: boolean) => void;
+  onDismiss?: () => void;
 }
 
 const OPTIONS_HEIGHT_PIX = 28;
@@ -49,6 +50,7 @@ const HighlightOptions: React.FC<HighlightOptionsProps> = ({
   globalToggleActive = false,
   onToggleGlobal,
   onHandleHighlight,
+  onDismiss,
 }) => {
   const _ = useTranslation();
   const { envConfig } = useEnv();
@@ -228,6 +230,7 @@ const HighlightOptions: React.FC<HighlightOptionsProps> = ({
     saveSysSettings(envConfig, 'globalReadSettings', newGlobalReadSettings);
     setSelectedColor(color);
     onHandleHighlight(true);
+    onDismiss?.();
   };
 
   return (
@@ -323,8 +326,9 @@ const HighlightOptions: React.FC<HighlightOptionsProps> = ({
           className={clsx(
             'not-eink:border-base-content/20 eink-bordered not-eink:shadow-xs flex shrink-0 items-center justify-center rounded-full border p-0 transition-colors',
             'bg-base-300 theme-dark:bg-base-100',
+            // E-ink flattens the icon ink, so the active state inverts the chip.
             globalToggleActive
-              ? 'not-eink:text-primary'
+              ? 'not-eink:text-primary eink-contrast'
               : 'not-eink:text-base-content/80 hover:not-eink:text-base-content',
           )}
           style={{ width: size30, height: size30 }}

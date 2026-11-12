@@ -29,7 +29,10 @@ vi.spyOn(console, 'log').mockImplementation(() => {});
 const DECODE_SEC = 0.5;
 const GAP_SEC = 0.2;
 const flush = async () => {
-  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  // setImmediate, not setTimeout(0): Windows clamps timers to ~15.6ms, so the
+  // 20 turns here made a 444-step test take 135s and hit its budget. Both are
+  // macrotasks and this pipeline has no timer-phase dependency.
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
 };
 
 // The audio carries its sentence's text, so the fake decoder can record which

@@ -45,6 +45,13 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
 - 验证：相关 7 个测试文件 118 项通过，`tsc --noEmit` 通过；修改的 TS/TSX/JSON
   格式检查通过，工作流 YAML 与产品名/标识静态检查通过。原生安装包实际名称和
   启动标签待本次 CI 构建及设备安装验证。
+- 改名提交 `3918ef45d` 的首次普通 push 被 pre-push 拦截：格式、类型、lint 通过，
+  全量测试 15838 passed / 3 failed，仍集中在 Open Graph 与 TTS 段落预加载两个
+  测试文件。已修复测试的跨平台路径与调度问题，待完整 pre-push 复验并推送。
+- 测试修复仅涉及测试代码：Open Graph 子进程 import 使用 `pathToFileURL`；TTS 的
+  `flush()` 改用 `setImmediate` 保留 20 次事件循环让步。诊断证明旧测试在 Windows
+  的 444 步执行需 135.6 秒，所有段落均正常结束，超时后的异步残留污染后续断言。
+  修复后 9 项相关测试通过，TTS 文件连续 5 次通过，断言与 60 秒预算均未放宽。
 
 ## 本轮合并记录：v0.12.20
 

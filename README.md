@@ -1,5 +1,7 @@
 # Readest lite
 
+[简体中文](README.md) | [English](README.en.md)
+
 **使用自己的云存储同步书库，无需注册或登录 Readest 账号。**
 
 Readest lite 是 [Readest](https://github.com/readest/readest) 的独立 fork，保留上游的

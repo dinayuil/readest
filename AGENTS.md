@@ -2,7 +2,7 @@
 
 本仓库是 [`readest/readest`](https://github.com/readest/readest) 的 fork：
 
-- `origin` = `dinayuil/readest`（本 fork）
+- `origin` = `dinayuil/readest-lite`（本 fork，用户可见名称为 `Readest lite`）
 - `upstream` = `readest/readest`（官方）
 - 工作分支：`lite`；只跟官方**发布 tag**，不跟 `upstream/main`
 
@@ -25,15 +25,15 @@
 
 ## 核心约定
 
-1. **所有 fork 行为由一个开关控制**：`apps/readest-app/src/utils/access.ts` 的
+1. **无账号模式由一个开关控制**：`apps/readest-app/src/utils/access.ts` 的
    `ACCOUNTLESS_BUILD`。合并上游后逐处复核：
 
    ```bash
    grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
    ```
 
-2. **恢复官方行为**：把 `ACCOUNTLESS_BUILD` 改为 `false`，所有派生开关
-   （云同步付费墙、更新检查、遥测）自动恢复。
+2. **恢复官方账号行为**：把 `ACCOUNTLESS_BUILD` 改为 `false`，所有派生开关
+   （云同步付费墙、更新检查、遥测）自动恢复。应用品牌名称独立于此开关。
 3. **不要删除官方功能代码**：入口用守卫隐藏，保留页面/服务本身，减少上游合并
    冲突。
 4. **合并上游**：只 merge 发布 tag，用

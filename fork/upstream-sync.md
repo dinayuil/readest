@@ -9,7 +9,7 @@
 git remote add upstream git@github.com:readest/readest.git
 # 或者：git remote add upstream https://github.com/readest/readest.git
 git remote -v
-# origin   = 你的 fork（dinayuil/readest）
+# origin   = 你的 fork（dinayuil/readest-lite）
 # upstream = 官方（readest/readest）
 ```
 

@@ -7,10 +7,10 @@ import { AppService } from '@/types/system';
 import { useTrafficLightStore } from '@/store/trafficLightStore';
 import { eventDispatcher } from './event';
 
-const APP_NAME = 'Readest';
+const APP_NAME = 'Readest lite';
 
 /**
- * The OS window title, e.g. `Readest - The Hobbit`. It is never drawn in the
+ * The OS window title, e.g. `Readest lite - The Hobbit`. It is never drawn in the
  * UI — desktop windows are either decorationless (Windows/Linux) or hide their
  * title text (the macOS overlay title bar) — but window switchers and screen
  * readers announce it, so it has to name the open book to tell windows apart.

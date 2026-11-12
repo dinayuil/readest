@@ -171,10 +171,10 @@ jobs:
         run: |
           set -euo pipefail
           version=$(node -p "require('./apps/readest-app/package.json').version")
-          installer="target/${WINDOWS_RUST_TARGET}/release/bundle/nsis/Readest_${version}_${WINDOWS_ARCH_LABEL}-setup.exe"
+          installer="target/${WINDOWS_RUST_TARGET}/release/bundle/nsis/Readest lite_${version}_${WINDOWS_ARCH_LABEL}-setup.exe"
           [ -f "$installer" ] || { echo "::error::$installer not found"; exit 1; }
-          cp "$installer" "apps/readest-app/Readest-fork-${version}-${WINDOWS_ARCH_LABEL}-setup.exe"
-          ls -lh apps/readest-app/Readest-fork-*.exe
+          cp "$installer" "apps/readest-app/Readest-lite-${version}-${WINDOWS_ARCH_LABEL}-setup.exe"
+          ls -lh apps/readest-app/Readest-lite-*.exe
 
       - name: build the portable exe
         working-directory: apps/readest-app
@@ -198,13 +198,13 @@ jobs:
           # the bare exe, same here.
           exe="target/${WINDOWS_RUST_TARGET}/release/readest.exe"
           [ -f "$exe" ] || { echo "::error::$exe not found"; exit 1; }
-          cp "$exe" "apps/readest-app/Readest-fork-${version}-${WINDOWS_ARCH_LABEL}-portable.exe"
-          ls -lh apps/readest-app/Readest-fork-*.exe
+          cp "$exe" "apps/readest-app/Readest-lite-${version}-${WINDOWS_ARCH_LABEL}-portable.exe"
+          ls -lh apps/readest-app/Readest-lite-*.exe
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: readest-fork-windows-${{ inputs.windows_arch || 'x64' }}
-          path: apps/readest-app/Readest-fork-*.exe
+          name: readest-lite-windows-${{ inputs.windows_arch || 'x64' }}
+          path: apps/readest-app/Readest-lite-*.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -374,14 +374,14 @@ jobs:
               ;;
           esac
           version=$(node -p "require('./package.json').version")
-          cp "$apk" "Readest-fork-${version}-${{ inputs.android_abi || 'universal' }}-${variant}.apk"
-          echo "staged $apk -> Readest-fork-${version}-${{ inputs.android_abi || 'universal' }}-${variant}.apk"
-          ls -lh Readest-fork-*.apk
+          cp "$apk" "Readest-lite-${version}-${{ inputs.android_abi || 'universal' }}-${variant}.apk"
+          echo "staged $apk -> Readest-lite-${version}-${{ inputs.android_abi || 'universal' }}-${variant}.apk"
+          ls -lh Readest-lite-*.apk
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: readest-fork-android-${{ inputs.android_abi || 'universal' }}
-          path: apps/readest-app/Readest-fork-*.apk
+          name: readest-lite-android-${{ inputs.android_abi || 'universal' }}
+          path: apps/readest-app/Readest-lite-*.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -413,7 +413,7 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./apps/readest-app/package.json').version")
           tag="v${version}-lite.${GITHUB_RUN_NUMBER}"
-          title="Readest Fork ${version} (build ${GITHUB_RUN_NUMBER})"
+          title="Readest lite ${version} (build ${GITHUB_RUN_NUMBER})"
           notes=$(printf 'Automated Windows + Android build from `%s` (%s).\n\nCommit: https://github.com/%s/commit/%s\nRun: https://github.com/%s/actions/runs/%s\n' \
             "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
 

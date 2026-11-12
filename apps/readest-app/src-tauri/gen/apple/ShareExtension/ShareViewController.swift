@@ -408,7 +408,7 @@ private final class SaveOptionsViewController: UITableViewController {
 
   override func viewDidLoad() {
     super.viewDidLoad()
-    title = NSLocalizedString("Save to Readest", comment: "Share extension title")
+    title = NSLocalizedString("Save to Readest lite", comment: "Share extension title")
     // Both Cancel and Save are iOS system bar button items — UIKit
     // localizes them automatically for every language Apple ships, so
     // the extension doesn't carry its own .strings file for them.

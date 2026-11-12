@@ -15,6 +15,7 @@ settingGroups:
   app:
     base:
       PRODUCT_NAME: Readest
+      CFBundleDisplayName: Readest lite
       PRODUCT_BUNDLE_IDENTIFIER: com.bilingify.readest
       DEVELOPMENT_TEAM: J5W48D69VR
 targetTemplates:
@@ -150,7 +151,7 @@ targets:
     info:
       path: ShareExtension/Info.plist
       properties:
-        CFBundleDisplayName: Readest
+        CFBundleDisplayName: Readest lite
         NSExtension:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
@@ -218,7 +219,7 @@ targets:
     info:
       path: ReadestWidget/Info.plist
       properties:
-        CFBundleDisplayName: Readest
+        CFBundleDisplayName: Readest lite
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

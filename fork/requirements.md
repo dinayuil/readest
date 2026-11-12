@@ -20,6 +20,15 @@
 
 ## 2. 一个总开关
 
+应用的用户可见名称统一为 **Readest lite**，包括系统应用名称、窗口标题、关于
+页面、网页元信息和发布产物；`Readest Cloud` 等官方服务名称、上游链接和版权归属
+保留原名称。品牌名称独立于无账号模式开关。
+
+为兼容已安装 fork，保留包标识、二进制名称、URL scheme、签名和所有本地/云端
+数据路径。Windows 的产品名同时决定 NSIS 安装目录和卸载项，改名可能使旧的
+`Readest` 安装与新名称并存；不自动卸载旧安装。Android 保持 applicationId 与原
+签名，继续覆盖升级。
+
 `apps/readest-app/src/utils/access.ts`：
 
 ```ts

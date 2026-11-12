@@ -22,7 +22,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     didConnect interfaceController: CPInterfaceController
   ) {
     self.interfaceController = interfaceController
-    let root = CPListTemplate(title: "Readest", sections: makeSections())
+    let root = CPListTemplate(title: "Readest lite", sections: makeSections())
     rootTemplate = root
     interfaceController.setRootTemplate(root, animated: false, completion: nil)
     NotificationCenter.default.addObserver(
@@ -95,7 +95,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         if application.delegate?.application?(application, open: url, options: [:]) == true {
           self?.showNowPlaying()
         } else {
-          item?.setDetailText("Unable to open book. Open Readest on your phone and try again.")
+          item?.setDetailText("Unable to open book. Open Readest lite on your phone and try again.")
         }
         completion()
       }
@@ -104,7 +104,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     if !items.isEmpty {
       sections.append(CPListSection(items: items, header: "Recent Books", sectionIndexTitle: nil))
     } else if !active {
-      let item = CPListItem(text: "Open Readest on your phone to load your library", detailText: nil)
+      let item = CPListItem(text: "Open Readest lite on your phone to load your library", detailText: nil)
       item.isEnabled = false
       sections.append(CPListSection(items: [item]))
     }

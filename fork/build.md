@@ -9,8 +9,8 @@
 - **每次 push 自动触发**：Windows 与 Android 两个 job 并行构建。
 - 同时保留 `workflow_dispatch`，用于手动补跑或临时改架构/ABI/构建类型。
 - 构建成功后，在 Actions → 该次运行 → Artifacts 下载：
-  - `readest-fork-windows-<arch>`
-  - `readest-fork-android-<abi>`
+  - `readest-lite-windows-<arch>`
+  - `readest-lite-android-<abi>`
 - 如果是 `lite` 分支的 push，且两个 job 都成功，还会自动创建 GitHub Release，
   见下方“自动发布”。
 
@@ -27,7 +27,7 @@
 - 只对 **`lite` 分支的 push** 生效；手动 `workflow_dispatch` 只留 Artifacts，
   不自动发布（手动构建可能是旧 ref、单平台或 debug 包）。
 - tag：`v<package.json 版本>-lite.<run_number>`，例如
-  `v0.12.20-lite.518`；title 带版本与 build 号。
+   `v0.12.20-lite.518`；标题为 `Readest lite <版本> (build <编号>)`。
 - Assets：Windows 的 `setup.exe` + `portable.exe`，Android 的 `.apk`，全部来自
   两个 job 上传的 Artifacts。
 - 重跑同一次 workflow 时 tag 不变，会更新已有 release（`gh release upload
@@ -54,8 +54,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `Readest-fork-<版本>-<arch>-setup.exe` | NSIS 安装包 |
-| `Readest-fork-<版本>-<arch>-portable.exe` | 单文件便携版，免安装 |
+| `Readest-lite-<版本>-<arch>-setup.exe` | NSIS 安装包 |
+| `Readest-lite-<版本>-<arch>-portable.exe` | 单文件便携版，免安装 |
 
 - **未签名**：构建时现场生成 `src-tauri/tauri.fork-unsigned.conf.json`（只含
   `{"bundle":{"createUpdaterArtifacts":false}}`，由 `--config` 合并进主配置），
@@ -69,7 +69,7 @@
 
 ## 4. Android 产物
 
-`Readest-fork-<版本>-<universal|arm64>-<release|debug>.apk`。
+`Readest-lite-<版本>-<universal|arm64>-<release|debug>.apk`。
 
 - **release（默认）**：体积约等于官方包。它**必须签名**，用的是 fork 自己的
   永久 keystore，通过仓库 secrets 注入，变量名与官方 `release.yml` 完全一致：

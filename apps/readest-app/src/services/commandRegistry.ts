@@ -785,7 +785,7 @@ const actionItems = [
   },
   {
     id: 'action.about',
-    labelKey: _('About Readest'),
+    labelKey: _('About Readest lite'),
     keywords: ['about', 'readest', 'version', 'info'],
   },
   {

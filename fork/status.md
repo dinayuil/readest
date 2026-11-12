@@ -6,22 +6,23 @@
 > 不要再新建 `TODO`、`PROGRESS`、`NOTES` 之类的平行文件；所有进度、待办、
 > 合并记录都写在这里。
 
-最后更新：2026-11-11
+最后更新：2026-11-12
 
 ## 当前状态
 
 | 项目 | 值 |
 | --- | --- |
 | 分支 | `lite` |
+| 应用名称 | `Readest lite`；仓库 `dinayuil/readest-lite` |
 | 当前基线 | 官方 `v0.12.20`（`28aab23e0`，2026-11-05 发布） |
 | 合并提交 | `dbfcad035` — `Merge tag 'v0.12.20' into lite` |
 | 版本号 | `apps/readest-app/package.json` = `0.12.20` |
 | fork 开关 | `ACCOUNTLESS_BUILD = true`（`apps/readest-app/src/utils/access.ts`） |
-| 远端 | `origin` = `dinayuil/readest`；`upstream` = `readest/readest` |
+| 远端 | `origin` = `dinayuil/readest-lite`；`upstream` = `readest/readest` |
 | 客户端构建 | `.github/workflows/fork-build.yml`，Windows + Android，**每次 push 触发**；两个 job 都成功后自动创建 GitHub Release；Android 签名 secrets 已配置（2026-09-19） |
 | 文档入口 | 根目录 [`AGENTS.md`](../AGENTS.md) |
 
-所有 fork 改动都可以用一个词找到：
+无账号模式的 fork 改动可搜索下列开关；应用品牌改动还需检查 `Readest lite`：
 
 ```bash
 grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
@@ -29,6 +30,21 @@ grep -rn ACCOUNTLESS_BUILD apps/readest-app/src
 
 当前命中 **33 个文件（含 10 个测试文件）、约 92 处**（以实际 grep 结果为准）。
 改完或合并后按这个列表逐处复核即可。
+
+## 应用与仓库改名（2026-11-12）
+
+- GitHub 仓库已改为 `dinayuil/readest-lite`，本地 `origin` 已更新，Description
+  说明免账号云同步和 Windows/Android 构建。README 改为介绍本 fork 的特点、下载、
+  同步限制和开发入口，保留上游归属与 AGPL 许可。
+- 应用名称统一为 `Readest lite`：原生产品名、窗口、关于入口、Web/PWA 元信息、
+  iOS 扩展/小组件/CarPlay 的显示名称，以及 Release 标题。
+- 下载文件改为 `Readest-lite-*`，Artifacts 改为 `readest-lite-*`；Windows 工作流
+  已同步适配含空格的 `Readest lite_*` 原始安装包名称。
+- 保留包标识、binary/crate/target 名称、协议、签名和本地/云端数据目录；Windows
+  可能留下旧产品名的安装项。没有自动卸载逻辑。官方服务名与归属链接保留。
+- 验证：相关 7 个测试文件 118 项通过，`tsc --noEmit` 通过；修改的 TS/TSX/JSON
+  格式检查通过，工作流 YAML 与产品名/标识静态检查通过。原生安装包实际名称和
+  启动标签待本次 CI 构建及设备安装验证。
 
 ## 本轮合并记录：v0.12.20
 
@@ -92,13 +108,12 @@ library refresh / ABS offline）全部通过。
 
 ## 待办（唯一待办清单）
 
-- [ ] **确认首次 push 触发的 Fork Build**：Windows 与 Android 两个 job 都成功，
-      Artifacts 可下载，并自动生成 GitHub Release（tag 形如
-      `v0.12.20-lite.<run_number>`）。Android release 需要的三个 secrets 已在仓库中
-      （`ANDROID_KEY_BASE64` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`，
-      2026-09-19 配置），且此前手动运行成功过
-      （run `35930287767`，2026-09-23），所以 release 版应可直接签名；若这次失败，
-      再按 [`build.md`](build.md) 排查密钥或构建环境。
+- [ ] **应用改名后的构建验证**：核验 `Readest lite` 的 Windows 安装包名称、
+      Android 应用标签、窗口与关于页面，以及自动 Release 的标题和产物。
+
+- [x] **确认首次 push 触发的 Fork Build**：run `43115481535` 的 Windows、Android、
+      Release 三个 job 全部成功，已发布 `v0.12.20-lite.6`，含 setup.exe、portable.exe
+      与签名 APK。2026-11-12 已通过 GitHub API 核验。
 - [ ] **迁移存量 `translationProvider`**：默认值只影响新装；老配置里仍是
       `deepl`。翻译行为和选择器显示已经由同步解析修正，但设置文件里仍写着
       不可用的值。彻底做法是在 `appService.runMigrations` 加一条 fork 迁移

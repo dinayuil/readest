@@ -340,6 +340,18 @@ export class TtsStatsRecorder {
   }
 
   async #push(): Promise<void> {
+    // Third-party file stats run headless and independently of the Readest
+    // account: before the token/category guards, so a signed-out listener with a
+    // configured WebDAV/S3/Drive target still publishes. 'push' mode never
+    // pulls. The runner gates on the backend opt-in; with none there is no DB or
+    // network IO.
+    try {
+      const { runFileStatsSyncForAllBackends } = await import('./statsFileSyncRunner');
+      await runFileStatsSyncForAllBackends(env, { mode: 'push' });
+    } catch (err) {
+      console.warn('[stats] failed to push TTS statistics to file backends:', err);
+    }
+
     const db = this.#db;
     if (!db || !isSyncCategoryEnabled('stats')) return;
     // No AuthContext headless, so the session token stands in for `user`.

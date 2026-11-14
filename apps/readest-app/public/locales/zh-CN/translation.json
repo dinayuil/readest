@@ -1946,6 +1946,8 @@
   "Sync Reading Progress": "同步阅读进度",
   "Sync Highlights and Bookmarks": "同步高亮与书签",
   "Sync Reading Statistics": "同步阅读统计",
+  "Sync reading and listening history to your storage as unencrypted files": "以未加密文件将阅读与收听历史同步到您的存储空间",
+  "Syncing reading statistics…": "正在同步阅读统计…",
   "Sync Reading Status": "同步阅读状态",
   "Create KOReader credentials in BookOrbit under Settings > Integrations > KOReader, then enter them here with your server address.": "在 BookOrbit 的“设置 > 集成 > KOReader”中创建 KOReader 凭据，然后连同服务器地址一起填写在这里。",
   "Release to remove bookmark": "松手移除书签",

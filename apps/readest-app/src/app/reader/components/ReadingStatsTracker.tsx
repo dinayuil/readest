@@ -30,7 +30,7 @@ const runBestEffort = (work: Promise<unknown>): void => {
 };
 
 export default function ReadingStatsTracker({ bookKey }: { bookKey: string }) {
-  const { appService } = useEnv();
+  const { appService, envConfig } = useEnv();
   // Progress lives in readerProgressStore, not readerStore.viewStates.
   const progress = useBookProgress(bookKey);
   // booksData is keyed by book id = bookKey.split('-')[0].
@@ -100,7 +100,23 @@ export default function ReadingStatsTracker({ bookKey }: { bookKey: string }) {
     });
   };
 
+  // The third-party file channel is independent of the Readest account and its
+  // stats category: a signed-out reader with a WebDAV/S3/Drive target still
+  // expects their history to reach it. The runner itself gates on the backend
+  // being enabled/ready and on that backend's syncStats opt-in; 'push' mode
+  // never pulls, so the tracker cannot race its own local rows back and forth.
+  const fileStatsPush = () => {
+    if (!envConfig) return;
+    runBestEffort(
+      import('@/services/statistics/statsFileSyncRunner').then(
+        ({ runFileStatsSyncForAllBackends }) =>
+          runFileStatsSyncForAllBackends(envConfig, { mode: 'push' }),
+      ),
+    );
+  };
+
   const pushToAllTargets = (db: StatisticsDb, closing = false) => {
+    fileStatsPush();
     if (syncEnabled()) runBestEffort(pushStats(db, new SyncClient()));
     const bookOrbitPush = bookOrbitStatsPush(db);
     if (bookOrbitPush) runBestEffort(bookOrbitPush);
@@ -124,6 +140,17 @@ export default function ReadingStatsTracker({ bookKey }: { bookKey: string }) {
         if (cancelled) return;
         dbRef.current = db;
         if (syncEnabled()) runBestEffort(pullStats(db, new SyncClient()));
+        // Opening a book is a natural full reconciliation point: merge what
+        // peers wrote while this book was closed, then let the normal pushes
+        // publish this device's progress. Not account-gated.
+        if (envConfig) {
+          runBestEffort(
+            import('@/services/statistics/statsFileSyncRunner').then(
+              ({ runFileStatsSyncForAllBackends }) =>
+                runFileStatsSyncForAllBackends(envConfig, { mode: 'full' }),
+            ),
+          );
+        }
       }),
     );
     return () => {

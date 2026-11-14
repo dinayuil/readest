@@ -195,6 +195,52 @@ const migrations: Record<SchemaType, MigrationEntry[]> = {
         );
       `,
     },
+    {
+      // Immutable per-device chunk files (stats/v1/<writerId>/<uuid>.json)
+      // need durable per-target confirmations rather than a time cursor:
+      // imported history and duration growth can appear behind an event that
+      // was already pushed. Rows store the exact snapshots that were confirmed
+      // so a concurrent local write during a PUT stays pending on the next run.
+      // Prefix every table so an imported KOReader statistics.db or upstream
+      // schema cannot collide with generic names like `seen`.
+      name: '2026111401_statistics_file_sync',
+      sql: `
+        CREATE TABLE IF NOT EXISTS readest_stat_file_event_ack (
+          target_id TEXT NOT NULL,
+          book_hash TEXT NOT NULL,
+          page INTEGER NOT NULL,
+          start_time INTEGER NOT NULL,
+          duration INTEGER NOT NULL,
+          total_pages INTEGER NOT NULL,
+          acked_at INTEGER NOT NULL,
+          PRIMARY KEY (target_id, book_hash, page, start_time)
+        );
+
+        CREATE TABLE IF NOT EXISTS readest_stat_file_book_ack (
+          target_id TEXT NOT NULL,
+          book_hash TEXT NOT NULL,
+          title TEXT NOT NULL,
+          authors TEXT NOT NULL,
+          acked_at INTEGER NOT NULL,
+          PRIMARY KEY (target_id, book_hash)
+        );
+
+        CREATE TABLE IF NOT EXISTS readest_stat_file_seen (
+          target_id TEXT NOT NULL,
+          chunk_path TEXT NOT NULL,
+          seen_at INTEGER NOT NULL,
+          PRIMARY KEY (target_id, chunk_path)
+        );
+
+        CREATE TABLE IF NOT EXISTS readest_stat_file_book_clock (
+          book_hash TEXT NOT NULL PRIMARY KEY,
+          title_at INTEGER NOT NULL,
+          title_path TEXT NOT NULL,
+          authors_at INTEGER NOT NULL,
+          authors_path TEXT NOT NULL
+        );
+      `,
+    },
   ],
   // Per-book search index/cache: one search.db in each book's directory
   // (beside cover.png), holding extracted section text so library full-text

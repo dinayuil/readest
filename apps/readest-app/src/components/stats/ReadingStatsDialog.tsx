@@ -29,7 +29,7 @@ interface ReadingStats {
 
 const ReadingStatsContent: React.FC = () => {
   const _ = useTranslation();
-  const { appService } = useEnv();
+  const { appService, envConfig } = useEnv();
   const { user } = useAuth();
   const [stats, setStats] = useState<ReadingStats | null>(null);
   const [failed, setFailed] = useState(false);
@@ -46,6 +46,8 @@ const ReadingStatsContent: React.FC = () => {
     };
     StatisticsDb.open(appService)
       .then(async (db) => {
+        // Local first: the panel stays useful offline, and a slow/failed remote
+        // never gates what this device already has.
         await load(db);
         // Only an open book pulls stats, so from the library this device may
         // not have the account's other devices yet: show what's here, then pull.
@@ -59,8 +61,22 @@ const ReadingStatsContent: React.FC = () => {
           await pullStats(db, new SyncClient()).catch((err) =>
             console.warn('Failed to pull reading stats:', err),
           );
-          await load(db);
         }
+        // Third-party file stats are independent of the Readest account. Full
+        // mode merges peers' chunks, then publishes this device's history. A
+        // network failure only logs: the already-rendered local panel stays,
+        // and the dialog must not switch to its load-failure state.
+        if (envConfig) {
+          try {
+            const { runFileStatsSyncForAllBackends } = await import(
+              '@/services/statistics/statsFileSyncRunner'
+            );
+            await runFileStatsSyncForAllBackends(envConfig, { mode: 'full' });
+          } catch (err) {
+            console.warn('Failed to sync reading statistics files:', err);
+          }
+        }
+        await load(db);
       })
       .catch((err) => {
         console.error('Failed to load reading stats:', err);

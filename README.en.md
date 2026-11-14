@@ -19,6 +19,10 @@ released separately from the official Readest app.
 - **Sync without a Readest account:** configure WebDAV, S3, or another supported
   third-party storage provider to sync your library, book files, reading progress,
   highlights, and notes. Credentials for your storage service are still required.
+- **Optional reading statistics sync:** enable **Sync Reading Statistics** in a
+  storage provider's settings to merge reading and listening history across
+  devices. Existing history is uploaded first, followed by incremental changes.
+  The option is off by default.
 - **Simpler account navigation:** official account, subscription, and
   account-dependent integration entries are hidden to avoid unusable sign-in and
   upgrade routes.
@@ -72,8 +76,12 @@ Configure your storage in Settings → Integrations to sync your library, books,
 reading progress, and annotations. **This does not unlock all official online
 services or subscription features:**
 
-- Global app settings, reading statistics, and other official account data do
+- Global app settings, dictionaries, fonts, and other official account data do
   not gain third-party file sync through these changes.
+- Reading statistics require the separate **Sync Reading Statistics** option.
+  Book metadata and reading times are stored as unencrypted files. This version
+  merges history without cross-device clearing or deletion; repeated sync does
+  not count the same record twice.
 - Official cloud storage and account-dependent AI/translation proxies are
   outside the scope of this accountless build.
 - Google Drive and OneDrive require your own OAuth application and client ID
@@ -84,6 +92,20 @@ services or subscription features:**
 
 See [fork/requirements.md](fork/requirements.md) for the detailed scope and
 configuration switches. Maintainer documentation is currently in Chinese.
+
+### Enable reading statistics sync over WebDAV
+
+1. On each device, connect to the same storage directory in
+   **Settings → Integrations → WebDAV** and enable sync.
+2. Enable **Sync Reading Statistics** separately on each device and choose
+   **Send and receive** as the sync strategy.
+3. Select **Sync now**, then open **Reading Statistics** to view the merged history.
+
+The first sync uploads each device's existing statistics. Later, saved reading
+and listening events trigger background uploads. Opening a book or the statistics
+panel, or running a library sync, also merges data from other devices. If a
+background upload cannot finish while offline or before the app closes, the
+records remain local and can be uploaded on a later sync.
 
 ## Development and maintenance
 

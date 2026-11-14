@@ -25,6 +25,11 @@ import { recordLibraryPass, recordLibraryPassFailure } from '@/services/sync/fil
 export interface FileSyncFormSettings {
   enabled?: boolean;
   syncBooks?: boolean;
+  /**
+   * Opt-in: also sync reading/listening statistics. Absent means off, so
+   * existing configs keep syncing only the library.
+   */
+  syncStats?: boolean;
   fullSync?: boolean;
   strategy?: KOSyncStrategy;
   deviceId?: string;
@@ -95,6 +100,7 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
   const setLastError = useFileSyncStore((s) => s.setLastError);
 
   const handleToggleSyncBooks = () => persist({ syncBooks: !(stored.syncBooks ?? false) });
+  const handleToggleSyncStats = () => persist({ syncStats: !(stored.syncStats ?? false) });
   const handleToggleFullSync = () => persist({ fullSync: !(stored.fullSync ?? false) });
   const handleStrategyChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     await persist({ strategy: e.target.value as KOSyncStrategy });
@@ -167,6 +173,33 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
       recordLibraryPass(kind, result);
       const failure = formatSyncFailure(result, _);
       setLastError(kind, failure);
+
+      // The statistics pass rides on the same manual run but stays an opt-in
+      // extra: it writes unencrypted files, so its module is only loaded when
+      // the switch is on.
+      if (stored.syncStats) {
+        updateProgress(kind, _('Syncing reading statistics…'));
+        try {
+          const { runFileStatsSyncForBackend } = await import(
+            '@/services/statistics/statsFileSyncRunner'
+          );
+          await runFileStatsSyncForBackend(envConfig, kind, {
+            provider,
+            deviceId: deviceId as string,
+            settings,
+          });
+        } catch (e) {
+          // The library pass already finished; report this as a stats failure
+          // without recording a library failure or stamping lastSyncedAt. Keep
+          // any partial library failure it already reported instead of
+          // replacing that diagnostic with the stats error.
+          const message = e instanceof Error ? e.message : String(e);
+          setLastError(kind, [failure, message].filter(Boolean).join('\n'));
+          eventDispatcher.dispatch('toast', { type: 'error', message: formatSyncError(_, e) });
+          return;
+        }
+      }
+
       if (!failure) {
         await persist({ lastSyncedAt: Date.now() });
         eventDispatcher.dispatch('toast', {
@@ -191,6 +224,12 @@ const FileSyncForm: React.FC<FileSyncFormProps> = ({
         description={_('Uploads book files to your other devices')}
         checked={stored.syncBooks ?? false}
         onChange={handleToggleSyncBooks}
+      />
+      <SettingsSwitchRow
+        label={_('Sync Reading Statistics')}
+        description={_('Sync reading and listening history to your storage as unencrypted files')}
+        checked={stored.syncStats ?? false}
+        onChange={handleToggleSyncStats}
       />
       <SettingsSwitchRow
         label={_('Full Sync')}

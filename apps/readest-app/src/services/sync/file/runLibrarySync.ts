@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import { formatSyncFailure } from './syncResult';
 
 import type { Book } from '@/types/book';
@@ -8,13 +7,9 @@ import type { EnvConfigType } from '@/services/environment';
 import type { ProgressHandler } from '@/utils/transfer';
 import type { TranslationFunc } from '@/hooks/useTranslation';
 import type { SystemSettings } from '@/types/settings';
-import type { UserPlan } from '@/types/quota';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useFileSyncStore } from '@/store/fileSyncStore';
-import { isWebAppPlatform } from '@/services/environment';
-import { hasValidWebDriveToken } from '@/services/sync/providers/gdrive/auth/webTokenStore';
-import { isICloudSupportedPlatform } from '@/services/sync/providers/icloud/buildICloudProvider';
 import {
   getActiveFileSyncBackends,
   settingsKeyForBackend,
@@ -23,55 +18,39 @@ import {
   createFileSyncProvider,
   type FileSyncBackendKind,
 } from '@/services/sync/file/providerRegistry';
+import type { FileSyncProvider } from '@/services/sync/file/provider';
 import { createAppLocalStore } from '@/services/sync/file/appLocalStore';
 import { FileSyncEngine, type SyncLibraryResult } from '@/services/sync/file/engine';
+import { ensureFileSyncDeviceId } from '@/services/statistics/deviceId';
+import { runFileStatsSyncForBackend } from '@/services/statistics/statsFileSyncRunner';
+import { canBackendRun } from './backendReadiness';
+
+// Re-exported for the hooks/forms that historically imported the readiness
+// gates from this module. The definitions moved out so the statistics runner
+// can gate on them without importing this file and creating a static cycle.
+export { canBackendRun, getReadyFileSyncBackends } from './backendReadiness';
 
 /**
- * Whether a backend's transport can work at all right now. Web Google Drive
- * tokens are session-scoped with no refresh; once expired, every run aborts with
- * a terminal AUTH_FAILED on the index pull. Skipping is quieter than failing:
- * the Drive settings form already shows a Reconnect CTA, and a doomed request on
- * every library change would just spam the log and the row's error state.
- *
- * This lives in the runner, not the hooks, so the manual "Sync now", the library
- * auto-sync, and the reader's per-book sync all honour it.
- *
- * iCloud is additionally platform-gated: its `enabled` flag can reach a
- * Windows/Android/web device via a settings backup restore, and only the
- * iOS/macOS Tauri apps can reach a ubiquity container.
+ * Build one backend's engine + the provider it was built on. Returning both
+ * lets the library pass hand the very same provider to the statistics pass
+ * (one shared cache entry, one connection) instead of rebuilding it.
  */
-export const canBackendRun = (kind: FileSyncBackendKind): boolean => {
-  if (kind === 'gdrive' && isWebAppPlatform() && !hasValidWebDriveToken()) return false;
-  if (kind === 'icloud' && !isICloudSupportedPlatform()) return false;
-  return true;
-};
-
-/**
- * The enabled backends that can ACTUALLY sync right now — {@link
- * getActiveFileSyncBackends} minus any that {@link canBackendRun} rules out
- * (web Google Drive with a gone/expired token). Display surfaces use this so a
- * provider that is enabled but silently skipped is not counted as active or
- * reported as synced.
- */
-export const getReadyFileSyncBackends = (
-  settings: SystemSettings | null | undefined,
-  plan?: UserPlan,
-): FileSyncBackendKind[] =>
-  getActiveFileSyncBackends(settings, plan).filter((k) => canBackendRun(k));
-
-/** Build one backend's engine, or null when it cannot run here. */
 const buildEngine = async (
   envConfig: EnvConfigType,
   kind: FileSyncBackendKind,
   parentTransferId?: string,
-): Promise<FileSyncEngine | null> => {
+): Promise<{
+  engine: FileSyncEngine;
+  provider: FileSyncProvider;
+  settings: SystemSettings;
+} | null> => {
   if (!canBackendRun(kind)) return null;
   const settings = useSettingsStore.getState().settings;
   const appService = await envConfig.getAppService();
-  const fileProvider = await createFileSyncProvider(kind, settings, parentTransferId);
-  if (!fileProvider) return null;
+  const provider = await createFileSyncProvider(kind, settings, parentTransferId);
+  if (!provider) return null;
   const store = createAppLocalStore({ appService, settings, envConfig });
-  return new FileSyncEngine(fileProvider, store);
+  return { engine: new FileSyncEngine(provider, store), provider, settings };
 };
 
 const bookFile = (connector: FileSyncBackendKind, direction: FlowDirection) =>
@@ -99,26 +78,27 @@ export const recordLibraryPassFailure = (connector: FileSyncBackendKind, error: 
   recordFlow({ ...bookFile(connector, 'push'), error });
 };
 
+interface LibraryBackendOutcome {
+  result: SyncLibraryResult;
+  provider: FileSyncProvider;
+  deviceId: string;
+  settings: SystemSettings;
+}
+
 /** One backend's library sync. Throws; the caller isolates the failure. */
 const syncOneBackend = async (
   envConfig: EnvConfigType,
   kind: FileSyncBackendKind,
   _: TranslationFunc,
-): Promise<SyncLibraryResult | null> => {
-  const appService = await envConfig.getAppService();
+): Promise<LibraryBackendOutcome | null> => {
   const current = useSettingsStore.getState().settings;
-  const engine = await buildEngine(envConfig, kind);
-  if (!engine) return null;
+  const built = await buildEngine(envConfig, kind);
+  if (!built) return null;
+  const { engine, provider, settings } = built;
 
   const key = settingsKeyForBackend(kind);
   const ps = current[key];
-  let deviceId = ps?.deviceId;
-  if (!deviceId) {
-    deviceId = uuidv4();
-    const next = { ...current, [key]: { ...current[key], deviceId } };
-    useSettingsStore.getState().setSettings(next);
-    await appService.saveSettings(next);
-  }
+  const deviceId = await ensureFileSyncDeviceId(envConfig, kind);
 
   const strategy = ps?.strategy ?? 'silent';
   const result = await engine.syncLibrary(useLibraryStore.getState().library, {
@@ -139,13 +119,17 @@ const syncOneBackend = async (
   });
 
   recordLibraryPass(kind, result);
-  if (!result.failures && !result.indexPushFailed) {
-    const latest = useSettingsStore.getState().settings;
-    const next = { ...latest, [key]: { ...latest[key], lastSyncedAt: Date.now() } };
-    useSettingsStore.getState().setSettings(next);
-    await appService.saveSettings(next);
-  }
-  return result;
+  return { result, provider, deviceId, settings };
+};
+
+/** Stamp the backend's durable "last successful end-to-end sync" time. */
+const stampLastSyncedAt = async (envConfig: EnvConfigType, kind: FileSyncBackendKind) => {
+  const appService = await envConfig.getAppService();
+  const key = settingsKeyForBackend(kind);
+  const latest = useSettingsStore.getState().settings;
+  const next = { ...latest, [key]: { ...latest[key], lastSyncedAt: Date.now() } };
+  useSettingsStore.getState().setSettings(next);
+  await appService.saveSettings(next);
 };
 
 /**
@@ -188,9 +172,38 @@ export const runFileLibrarySyncPass = async (
       const kind = backends[i]!;
       if (i > 0) useFileSyncStore.getState().switchSync(kind, _('Syncing…'));
       try {
-        const result = await syncOneBackend(envConfig, kind, _);
-        if (result) {
-          useFileSyncStore.getState().setLastError(kind, formatSyncFailure(result, _));
+        const outcome = await syncOneBackend(envConfig, kind, _);
+        if (outcome) {
+          const { result, provider, deviceId, settings: providerSettings } = outcome;
+          // Statistics are an independent opt-in channel riding on the same
+          // provider. A failure must not rewrite the library's counted result
+          // or be recorded as a library failure — but it does fail this
+          // backend's run, so lastSyncedAt must not claim a clean end-to-end
+          // pass and lastError must keep saying what actually broke.
+          let statsError: string | null = null;
+          const live = useSettingsStore.getState().settings;
+          if (live[settingsKeyForBackend(kind)]?.syncStats) {
+            try {
+              await runFileStatsSyncForBackend(envConfig, kind, {
+                provider,
+                deviceId,
+                // Pin the stats target to what this provider was built for,
+                // so a settings edit during the (long) library pass cannot
+                // acknowledge the new target through the old connection.
+                settings: providerSettings,
+              });
+            } catch (e) {
+              statsError = e instanceof Error ? e.message : String(e);
+              console.warn('[cloudSync] statistics file sync failed', kind, e);
+            }
+          }
+          const libraryError = formatSyncFailure(result, _);
+          useFileSyncStore
+            .getState()
+            .setLastError(kind, [libraryError, statsError].filter(Boolean).join('\n') || null);
+          if (!statsError && !result.failures && !result.indexPushFailed) {
+            await stampLastSyncedAt(envConfig, kind);
+          }
           // Spread the latest counters, but ACCUMULATE everything that reports
           // trouble — a plain spread let a healthy second mirror erase the
           // first one's failures and its unwritten index (#5900).
@@ -231,8 +244,9 @@ export const runFileBookUpload = async (envConfig: EnvConfigType, book: Book): P
   let anyUploaded = false;
   for (const kind of backends) {
     try {
-      const engine = await buildEngine(envConfig, kind);
-      if (!engine) continue;
+      const built = await buildEngine(envConfig, kind);
+      if (!built) continue;
+      const { engine } = built;
       const result = await engine.pushBookFile(book);
       if (result.uploaded) recordFlow({ ...bookFile(kind, 'push'), bookTitle: book.title });
       if (!result.uploaded && result.reason !== 'remote-matches') continue;
@@ -270,8 +284,9 @@ export const runFileBookDownload = async (
   const backends = getActiveFileSyncBackends(useSettingsStore.getState().settings);
   for (const kind of backends) {
     try {
-      const engine = await buildEngine(envConfig, kind, parentTransferId);
-      if (!engine) continue;
+      const built = await buildEngine(envConfig, kind, parentTransferId);
+      if (!built) continue;
+      const { engine } = built;
       if (!(await engine.downloadBookFile(book, onProgress))) continue;
       recordFlow({ ...bookFile(kind, 'pull'), bookTitle: book.title });
       book.downloadedAt = Date.now();
